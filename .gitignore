@@ -1,0 +1,13 @@
+# .gitignore
+
+# Ignore all data files
+data/*
+!data/.keep 
+
+# Ignore Python cache and compiled files
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Ignore environment files
+.env
