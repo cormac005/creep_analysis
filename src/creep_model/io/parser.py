@@ -55,7 +55,7 @@ class ExcelCreepParser:
             temp_time_series=temp_time_series,
             temperature_readings=temperature_readings,
             # Injecting the local metadata variables here:
-            applied_stress_MPa=float(sheet_meta["StressMPa"]) / 1e6,  # Converted from Pa to MPa!
+            applied_stress_MPa=float(sheet_meta["StressPa"]) / 1e6,  # Converted from Pa to MPa
             age_days=int(sheet_meta["AgeDays"]),
             print_quality=str(sheet_meta["PrintQuality"])
         )

@@ -12,6 +12,14 @@ class BaseCreepModel(ABC):
         # This will store the optimized parameters after fitting
         self.fitted_params_: npt.NDArray[np.float64] | None = None
 
+    def predict(self, X: npt.NDArray) -> npt.NDArray:
+        """Template method — enforces fit check, delegates to _predict."""
+        if not self.is_fitted:
+            raise RuntimeError(
+                f"{type(self).__name__} must be fitted before prediction. Call .fit(X, y) first."
+            )
+        return self._predict(X)
+
     @abstractmethod
     def fit(self, X: npt.NDArray[np.float64], y: npt.NDArray[np.float64]) -> "BaseCreepModel":
         """
@@ -27,18 +35,10 @@ class BaseCreepModel(ABC):
         """
         pass
 
-    @abstractmethod
-    def predict(self, X: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        """
-        Predicts strain based on input features.
-        
-        Args:
-            X: 2D array of shape (N_samples, N_features).
-            
-        Returns:
-            1D array of shape (N_samples,) representing predicted Strain.
-        """
-        pass
+    # @abstractmethod
+    # def _predict(self, X: npt.NDArray) -> npt.NDArray:
+    #     """Subclasses implement this instead of predict directly."""
+    #     pass
         
     @property
     def is_fitted(self) -> bool:

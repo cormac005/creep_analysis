@@ -34,19 +34,6 @@ def plot_local_fit(test: CreepTest, model: BaseCreepModel, save_path: str | None
         sharex=True
     )
 
-    # -------------------------------------------------------------
-    # TODO for you (Matplotlib logic):
-    # 
-    # ax_main:
-    # - Plot 'time_flat' vs 'y_true' as a scatter plot (raw data)
-    # - Plot 'time_flat' vs 'y_pred' as a solid line (model fit)
-    # - Add labels, title, and legend
-    #
-    # ax_res:
-    # - Plot 'time_flat' vs 'residuals' as a scatter plot
-    # - Add a horizontal dashed line at y=0 (ax_res.axhline(0, color='black', linestyle='--'))
-    # - Add labels (y-axis should be 'Residuals')
-    # -------------------------------------------------------------
     # Plot raw data and model fit on the main axis
     ax_main.scatter(time_flat, y_true, color='blue', label='Raw Data', alpha=0.6)
     ax_main.plot(time_flat, y_pred, color='red', label='Model Fit', linewidth=2)

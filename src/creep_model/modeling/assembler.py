@@ -6,6 +6,9 @@ import pandas as pd
 class DataAssembler:
     """Extracts and formats data from domain objects into modeling matrices."""
     
+    def __init__(self, normalise: bool = False):
+        self.normalise = normalise
+    
     @staticmethod
     def get_local_data(test: CreepTest) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """
@@ -50,17 +53,6 @@ class DataAssembler:
             
         # np.vstack stacks the list of 2D matrices vertically into one giant matrix
         return np.vstack(X_list), np.concatenate(y_list)
-            
-        # Use np.vstack(X_list) and np.concatenate(y_list) to return the final matrices
-        X = np.column_stack((
-            np.concatenate([test.time_series for test in experiment.tests.values()]),
-            np.full(sum(len(test.time_series) for test in experiment.tests.values()), experiment.applied_stress_MPa),
-            np.full(sum(len(test.time_series) for test in experiment.tests.values()), experiment.age_days),
-            np.full(sum(len(test.time_series) for test in experiment.tests.values()), pq_binary),
-            np.concatenate([test.interpolate_temperature() for test in experiment.tests.values()])
-        ))
-        y = np.concatenate([test.strain_series for test in experiment.tests.values()])
-        return X, y
     
     @staticmethod
     def get_summary_dataframe(experiment: CreepExperiment) -> pd.DataFrame:

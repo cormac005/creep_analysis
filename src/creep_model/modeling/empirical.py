@@ -3,6 +3,7 @@ import numpy.typing as npt
 from scipy.optimize import curve_fit
 from creep_model.modeling.base import BaseCreepModel
 from scipy.optimize import minimize
+from typing import Callable, Optional
 
 # 1. THE PURE MATH FUNCTION
 def findley_law(time: npt.NDArray[np.float64], eps0: float, m: float, n: float) -> npt.NDArray[np.float64]:
@@ -79,9 +80,14 @@ class LocalFindleyModel(BaseCreepModel):
 class QuantizedFindleyModel(BaseCreepModel):
     """Fits Findley law using a custom Epsilon-Insensitive Loss function."""
     
-    def __init__(self, step_size: float = 0.0005):
-        super().__init__()
-        self.epsilon = step_size / 2.0  # The boundary of your red dashed lines (0.00025)
+    def __init__(self, sensor_strain_resolution: float = 5e-4):
+        """
+        Args:
+            sensor_strain_resolution: The smallest detectable strain increment
+                = extension_resolution_mm / gauge_length_mm
+                = 0.01mm / 20mm = 5e-4
+        """
+        self.epsilon = sensor_strain_resolution / 2.0  # Half-width of censoring interval
 
     def _custom_loss(self, params: list[float], time_flat: npt.NDArray, y_true: npt.NDArray) -> float:
         """
@@ -139,14 +145,6 @@ class QuantizedFindleyModel(BaseCreepModel):
         if not self.is_fitted:
             raise ValueError("Model not fitted.")
         return findley_law(X.flatten(), *self.fitted_params_)
-    
-
-import numpy as np
-import numpy.typing as npt
-from scipy.optimize import minimize
-from typing import Callable, Optional
-
-# Assuming BaseCreepModel and modified_findley_law are imported elsewhere
 
 class LocalModifiedFindleyModel(BaseCreepModel):
     """Fits the 4-parameter modified Findley law using multi-start custom loss."""
@@ -161,7 +159,34 @@ class LocalModifiedFindleyModel(BaseCreepModel):
         super().__init__()
         self.n_starts = n_starts
         # Fall back to a default loss if none is supplied
-        self.loss_func = loss_func if loss_func is not None else self._default_rounded_mle_loss
+        self.loss_func = loss_func if loss_func is not None else self._custom_loss
+
+    def _custom_loss(self, params: list[float], time_flat: npt.NDArray, y_true: npt.NDArray) -> float:
+        """
+        Calculates how badly the model violates the sensor resolution bounds.
+        """
+        # Unpack params
+        eps0, a, m, n = params
+        
+        # 1. Calculate prediction
+        y_pred = modified_findley_law(time_flat, eps0, a, m, n)
+        
+        # 2. Calculate the absolute residual
+        abs_residual = np.abs(y_true - y_pred)
+        
+        # 3. Apply the Epsilon-Insensitive logic:
+        # If the residual is less than epsilon (inside red lines), penalty is 0.
+        # If the residual is greater than epsilon, we heavily punish the difference.
+        violation = np.maximum(0, abs_residual - self.epsilon)
+        
+        # Square the violation so the optimizer has a smooth gradient to follow
+        loss = np.sum(violation ** 2)
+        
+        # Optional: Add a tiny bit of MSE so the flat "valley" has a slight slope 
+        # towards the exact center, preventing the Zero Gradient Problem.
+        loss += 1e-6 * np.sum(abs_residual ** 2)
+        
+        return float(loss)
 
     def _default_rounded_mle_loss(self, params: npt.NDArray, time: npt.NDArray, y_obs: npt.NDArray) -> float:
         """Default interval-censored MLE loss for data rounded to the nearest 5e-4."""
@@ -287,13 +312,18 @@ class GlobalMLEModel(BaseCreepModel):
     
 class GlobalMSEModel(BaseCreepModel):
     """Fits all tests simultaneously using Least Squares (MSE)."""
+    def _prepare_input(self, X: npt.NDArray) -> npt.NDArray:
+        """Ensures input is shape (2, N) as required by global_creep_law."""
+        if X.ndim == 2 and X.shape[1] == 2:
+            return X.T
+        elif X.ndim == 2 and X.shape[0] == 2:
+            return X
+        raise ValueError(f"Unexpected X shape: {X.shape}")
     
     def fit(self, X: npt.NDArray, y: npt.NDArray) -> "GlobalMSEModel":
         # 1. Ensure inputs are properly flattened/shaped for curve_fit
-        # If X is shape (N, 2), transposing it to (2, N) allows your function 
-        # to cleanly unpack it via: stress, time = X
-        X_input = X.T if X.ndim == 2 and X.shape[1] == 2 else X
-        y_flat = y.flatten()
+        # Prepare X to be shape (2, N) for global_creep_law
+        X_T = self._prepare_input(X)
         
         # Initial Guesses [eps_coeff, B, n, m]
         p0 = [0.001, 1e-5, 1.0, 0.3]
@@ -303,9 +333,6 @@ class GlobalMSEModel(BaseCreepModel):
             [0.0, 0.0, 0.01, 0.01],
             [np.inf, np.inf, 5.0, 0.99]
         )
-        
-        # TRANSPOSE X to match SciPy's expected shape (2, N)
-        X_T = X.T 
         
         # 2. Use curve_fit to minimize the MSE between the model and observed data
         popt, _ = curve_fit(

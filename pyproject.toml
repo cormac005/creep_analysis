@@ -13,7 +13,9 @@ dependencies = [
     "pandas>=2.0.0",
     "matplotlib>=3.7.0",
     "seaborn>=0.12.0",
-    "openpyxl>=3.1.0",      
+    "openpyxl>=3.1.0",
+    "plotly>=6.0.0",
+    "scikit-learn>=1.2.0",  # <--- Added for sklearn.metrics (R2 and MSE)
 ]
 
 [project.optional-dependencies]
@@ -21,4 +23,28 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov",           
+]
+
+[tool.pytest.ini_options]
+# Automatically runs coverage on your source code directory every time you type 'pytest'
+# Replace 'creep_model' with the exact name of your source code directory if different
+addopts = "--cov=creep_model --cov-report=term-missing"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+# Ensures that even files not explicitly imported or executed by a specific test run 
+# are still measured against your coverage total. Crucial for multi-option packages!
+source = ["creep_model"]
+branch = true
+
+[tool.coverage.report]
+# Automatically fails the test suite if your code drops below this threshold
+fail_under = 90  
+
+# Exclude specific code blocks (like missing model state errors) from penalizing your score
+exclude_lines = [
+"pragma: no cover",
+"raise NotImplementedError",
+"if __name__ == .__main__.:",
+"raise ValueError\\(\"Model not fitted\\.\"\\)" # Catches your state safety guards
 ]

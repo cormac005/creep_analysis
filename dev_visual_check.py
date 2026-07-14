@@ -3,7 +3,7 @@ from pathlib import Path
 
 from creep_model.io.parser import ExcelCreepParser
 from creep_model.modeling.assembler import DataAssembler
-from creep_model.modeling.empirical import LocalFindleyModel, QuantizedFindleyModel
+from creep_model.modeling.empirical import LocalFindleyModel, QuantizedFindleyModel, LocalModifiedFindleyModel
 from creep_model.viz.plots import plot_local_fit
 
 def main():
@@ -14,9 +14,9 @@ def main():
     parser = ExcelCreepParser(data_path)
     experiment = parser.load_experiment()
     
-    # Grab the first available test sheet dynamically
+    # Grab the a test sheet dynamically
     test_names = list(experiment.tests.keys())
-    first_test_name = test_names[1]
+    first_test_name = test_names[13]
     test = experiment.tests[first_test_name]
 
     print(f"2. Assembling data for sheet: {first_test_name}")
@@ -28,7 +28,7 @@ def main():
     print(f"   - First time reading: {X[0][0]:.4f}") 
     
     print("3. Initializing and Fitting Findley Model...")
-    model = QuantizedFindleyModel()
+    model = LocalFindleyModel()
     
     try:
         model.fit(X, y)
