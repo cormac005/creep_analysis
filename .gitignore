@@ -11,3 +11,7 @@ __pycache__/
 
 # Ignore environment files
 .env
+
+# Ignore docs folder for now (might flag turn it in)
+docs/*
+!docs/.keep

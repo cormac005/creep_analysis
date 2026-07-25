@@ -12,7 +12,7 @@ Two statistics are defined:
 
 Fits slope by via linear regression.
 """
-from turtle import pd
+import pandas as pd
 
 import numpy as np
 import numpy.typing as npt
@@ -77,7 +77,8 @@ def steady_state_strain_rate(
     eps_dot_ss = slope
 
     # Find mean temperature during the secondary creep region
-    mean_temp = np.mean(test.temperature_readings[start:end + 1])
+    temps = test.interpolate_temperature()[start:end+1]
+    mean_temp = np.mean(temps)
     
     return eps_dot_ss, mean_temp
 

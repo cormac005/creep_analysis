@@ -1,6 +1,6 @@
 # creep_model
 
-Python package for modeling **creep behavior in FFF-printed PLA specimens**, developed as part of a final-year engineering thesis (supervised by Tanner) investigating how print quality, applied stress, specimen age, and ambient temperature fluctuations affect long-term deformation.
+Python package for modeling **creep behavior in FFF-printed PLA specimens**, developed as part of a final-year aeronautical engineering thesis investigating aiming to charectersise and model the behavoiur of FFF PLA subject to constant axial loading.
 
 This repository contains the full data pipeline: parsing raw experimental Excel workbooks, exploratory data analysis, constitutive model fitting, and visualization.
 

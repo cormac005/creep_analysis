@@ -53,7 +53,11 @@ class StageClassification:
 
     @property
     def has_tertiary(self) -> bool:
-        return self.secondary_end_idx is not None
+        if self.secondary_end_idx is None or len(self.plateaus) < 2:
+            return False
+            
+        # Wrap the result in bool() to cast it from np.bool_ to Python bool
+        return bool(self.secondary_end_idx < self.plateaus[-2].end_idx)
 
 
 def _find_plateaus(strain_series: npt.NDArray[np.float64]) -> list[Plateau]:
@@ -90,13 +94,11 @@ def classify_stages(test: CreepTest, k1: int, k2: int) -> StageClassification:
         test: the CreepTest to classify.
         k1: number of consecutive non-increasing plateau lengths required
             to declare the START of secondary creep.
-        k2: number of consecutive STRICTLY decreasing plateau lengths
-            required to declare the START of tertiary creep.
+        k2: number of consecutive plateau lengths strictly less than the 
+            primary_end_idx plateau length required to declare the START of tertiary creep.
 
     Returns:
-        StageClassification with boundary indices you can use directly for
-        trimming (see modeling/trimming.py) and for computing eps_dot_ss
-        (see eda/statistics.py).
+        StageClassification with boundary indices.
     """
     if test.is_empty:
         raise ValueError(f"Cannot classify empty test: {test.test_id}")
@@ -106,39 +108,38 @@ def classify_stages(test: CreepTest, k1: int, k2: int) -> StageClassification:
     # Exclude the final plateau -- it ends because the test ends, not because of a real transition.
     plateaus_for_classification = plateaus[:-1]
 
-    # Loop through every combination of k1 consectuve plateaus and check if they are non-increasing
+    # Loop through every combination of k1 consecutive plateaus and check if they are non-increasing
     secondary_start_plateau_idx = None
     for i in range(len(plateaus_for_classification) - k1 + 1):
-        if all(plateaus_for_classification[j].n_points >= plateaus_for_classification[j + 1].n_points for j in range(i, i + k1 - 1)):
+        if (all(p.n_points > 1 for p in plateaus_for_classification[i:i + k1]) and
+            all(plateaus_for_classification[j].n_points >= plateaus_for_classification[j + 1].n_points for j in range(i, i + k1 - 1))):
             secondary_start_plateau_idx = i
             break
 
     if secondary_start_plateau_idx is None:
-        # No secondary creep detected at all within this k1 setting --
-        # Set all indices to None and return early.
         return StageClassification(
-            test_id=test.test_id,
-            plateaus=plateaus,
-            primary_end_idx=None,
-            secondary_end_idx=None,
-            k1=k1,
-            k2=k2,
+            test_id=test.test_id, plateaus=plateaus, primary_end_idx=None, secondary_end_idx=None, k1=k1, k2=k2
         )
-    else:  
-        # Set Primary creep end index to the plateau before the first of the k1 run
-        primary_end_idx = plateaus_for_classification[secondary_start_plateau_idx - 1].end_idx
-        # Now search for tertiary creep after the secondary_start_plateau_idx
-        tertiary_start_plateau_idx = None
-        for i in range(secondary_start_plateau_idx + k1, len(plateaus_for_classification) - k2 + 1):
-            if all(plateaus_for_classification[j].n_points > plateaus_for_classification[j + 1].n_points for j in range(i, i + k2 - 1)):
-                tertiary_start_plateau_idx = i
-                break
+    
+    # Establish secondary start boundaries
+    primary_end_plateau_idx = secondary_start_plateau_idx - 1
+    primary_end_idx = plateaus_for_classification[primary_end_plateau_idx].end_idx
+    
+    # NEW LOGIC: Extract the baseline plateau length at the primary_end_idx position
+    primary_end_length = plateaus_for_classification[primary_end_plateau_idx].n_points
+
+    # Search for tertiary creep after the secondary_start_plateau_idx
+    tertiary_start_plateau_idx = None
+    for i in range(secondary_start_plateau_idx + k1, len(plateaus_for_classification) - k2 + 1):
+        # CHANGED: Verify k2 consecutive plateaus are all strictly shorter than primary_end_length
+        if (all(p.n_points > 1 for p in plateaus_for_classification[i:i + k2]) and
+            all(p.n_points < primary_end_length for p in plateaus_for_classification[i:i + k2])):
+            tertiary_start_plateau_idx = i
+            break
 
     if tertiary_start_plateau_idx is None:
-        # No Tertiary creep detected -- set secondary_end_idx to the last plateau's end index
         secondary_end_idx = plateaus_for_classification[-1].end_idx
     else:
-        # Set secondary_end_idx to the plateau before the first of the k2 run
         secondary_end_idx = plateaus_for_classification[tertiary_start_plateau_idx - 1].end_idx
 
     return StageClassification(
@@ -149,3 +150,4 @@ def classify_stages(test: CreepTest, k1: int, k2: int) -> StageClassification:
         k1=k1,
         k2=k2,
     )
+

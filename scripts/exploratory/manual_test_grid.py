@@ -2,7 +2,7 @@ from pathlib import Path
 
 import matplotlib
 from creep_model.io.parser import ExcelCreepParser
-from creep_model.modeling.assembler import DataAssembler
+from creep_model.modelling.assembler import DataAssembler
 import matplotlib.pyplot as plt
 import numpy as np
 

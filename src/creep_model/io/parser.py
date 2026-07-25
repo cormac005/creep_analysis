@@ -41,7 +41,7 @@ class ExcelCreepParser:
         # 3. Convert to NumPy arrays
         time_series = df_ext[config.col_time].to_numpy(dtype=np.float64)
         extension_series = df_ext[config.col_extension].to_numpy(dtype=np.float64)
-        temp_time_series = df_temp[config.col_temp_time].to_numpy(dtype=np.float64)
+        temp_time_series = df_temp[config.col_temp_time].to_numpy(dtype=np.float64) * 60
         temperature_readings = df_temp[config.col_temp].to_numpy(dtype=np.float64)
 
         # 4. Convert extension to strain using the gauge length

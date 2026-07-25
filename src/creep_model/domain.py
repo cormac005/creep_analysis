@@ -28,7 +28,7 @@ class CreepTest:
         # Interpolate the valid temperature readings to match the time series
         interpolated_temps = np.interp(
             self.time_series,
-            self.temp_time_series*60,  # Convert minutes to seconds
+            self.temp_time_series, 
             self.temperature_readings
         )
         return interpolated_temps
