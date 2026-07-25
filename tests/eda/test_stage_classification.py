@@ -130,60 +130,64 @@ class TestClassifyStagesSecondaryOnly:
 class TestClassifyStagesTertiary:
     def test_full_three_stage_detection(self, make_test, strain_from_plateau_lengths):
         """
-        Plateau lengths: [1, 2, 3, 5, 5, 5, 4, 3, 2, 1], k1=2, k2=2.
-        Final plateau (idx 9, len 1) excluded -> classified over
-        [1, 2, 3, 5, 5, 5, 4, 3, 2] (9 plateaus, local indices 0-8).
+        Tertiary detection is a THRESHOLD check against primary_end_length,
+        not a pairwise strictly-decreasing check. Plateau lengths:
+        [1, 2, 5, 6, 6, 6, 3, 3, 3, 1], k1=2, k2=2.
 
-        Secondary onset (k1=2, single-step non-increase): first i where
-        n_points[i] >= n_points[i+1]. 1<2<3<5 all strictly increasing, then
-        5>=5 at i=3 (local plateau 3 vs 4). => secondary_start_plateau_idx=3
-        => primary_end_idx = end_idx of local plateau 2 (len-3 plateau)
+        Final plateau (len 1) excluded -> classified over
+        [1, 2, 5, 6, 6, 6, 3, 3, 3] (9 plateaus, local indices 0-8).
 
-        Tertiary onset (k2=2, single-step strict decrease), searched from
-        i = secondary_start_plateau_idx + k1 = 3+2 = 5 onward: n_points[5]=5,
-        n_points[6]=4 -> 5>4 at i=5. => tertiary_start_plateau_idx=5
-        => secondary_end_idx = end_idx of local plateau 4 (the plateau
-           right before the tertiary_start index)
+        Secondary onset (k1=2): first i where n_points[i] >= n_points[i+1].
+        1<2<5<6, then 6>=6 at i=3 (plateaus 3,4). => secondary_start=3
+        => primary_end_plateau_idx=2 (len 5) => primary_end_length=5
 
-        Index arithmetic:
+        Tertiary onset (k2=2): search from i = 3+2 = 5. Threshold is
+        "< primary_end_length (5)", not "< previous plateau":
+            i=5: window [6, 3] -> 6 < 5? No. Fails.
+            i=6: window [3, 3] -> both < 5? Yes. tertiary_start=6.
+        (Note plateau 6 was already < 5 at i=5 too, but i=5 fails because
+        plateau 5 (len 6) is still >= primary_end_length -- it's a WINDOW
+        check, not "the first single short plateau".)
+
+        Index arithmetic (cumulative plateau lengths):
             plateau0: len1 -> end_idx 0
             plateau1: len2 -> end_idx 2
-            plateau2: len3 -> end_idx 5      <- expected primary_end_idx
-            plateau3: len5 -> end_idx 10
-            plateau4: len5 -> end_idx 15     <- expected secondary_end_idx
-            plateau5: len5 -> end_idx 20
-            plateau6: len4 -> end_idx 24
-            plateau7: len3 -> end_idx 27
-            plateau8: len2 -> end_idx 29
-            plateau9 (final, excluded): len1 -> end_idx 30
+            plateau2: len5 -> end_idx 7      <- expected primary_end_idx
+            plateau3: len6 -> end_idx 13
+            plateau4: len6 -> end_idx 19
+            plateau5: len6 -> end_idx 25     <- expected secondary_end_idx
+            plateau6: len3 -> end_idx 28
+            plateau7: len3 -> end_idx 31
+            plateau8: len3 -> end_idx 34
+            plateau9 (final, excluded): len1 -> end_idx 35
         """
-        strain = strain_from_plateau_lengths([1, 2, 3, 5, 5, 5, 4, 3, 2, 1])
+        strain = strain_from_plateau_lengths([1, 2, 5, 6, 6, 6, 3, 3, 3, 1])
         test = make_test(strain_series=strain)
 
         result = classify_stages(test, k1=2, k2=2)
 
-        assert result.primary_end_idx == 5
-        assert result.secondary_end_idx == 15
+        assert result.primary_end_idx == 7
+        assert result.secondary_end_idx == 25
         assert result.has_tertiary is True
 
-    def test_final_plateau_dip_is_correctly_ignored(
+    def test_plateau_equal_to_primary_length_does_not_count_as_tertiary(
         self, make_test, strain_from_plateau_lengths
     ):
         """
-        Plateau lengths [1, 2, 3, 4, 2]: the ONLY decrease in the whole
-        sequence is the final plateau (4 -> 2). Since the final plateau is
-        always excluded from classification, [1,2,3,4] (strictly increasing)
-        is all that's actually evaluated -- no secondary/tertiary should be
-        detected. This pins down that a low final-plateau count (a test
-        artificially cut short) doesn't get misread as a real transition.
+        Threshold check is STRICT (<, not <=). A plateau exactly equal to
+        primary_end_length should never trigger tertiary on its own.
+        Lengths [1, 2, 4, 4, 4, 4, 4], k1=2, k2=2: classified over
+        [1, 2, 4, 4, 4, 4] (final excluded). Secondary onset at i=2
+        (4>=4). primary_end_length=2 (plateau1, len 2) -- wait, deliberately
+        chosen so every post-onset plateau (len 4) is >= primary_end_length,
+        so tertiary can never trigger regardless of k2.
         """
-        strain = strain_from_plateau_lengths([1, 2, 3, 4, 2])
+        strain = strain_from_plateau_lengths([1, 2, 4, 4, 4, 4, 4])
         test = make_test(strain_series=strain)
 
         result = classify_stages(test, k1=2, k2=2)
 
-        assert result.primary_end_idx is None
-        assert result.secondary_end_idx is None
+        assert result.has_tertiary is False
 
 
 # ---------------------------------------------------------------------------
@@ -198,46 +202,48 @@ class TestClassifyStagesTertiary:
 # ---------------------------------------------------------------------------
 
 class TestClassifyStagesEdgeCases:
-    def test_k1_equals_one_triggers_immediately(
+    def test_k1_equals_one_triggers_at_first_multi_point_plateau(
         self, make_test, strain_from_plateau_lengths
     ):
         """
-        k1=1 means the "run" check has an empty inner range (range(i, i+0)),
-        which `all()` treats as vacuously True for ANY i -- so
-        secondary_start_plateau_idx is always 0, regardless of data.
+        k1=1 makes the pairwise "run" check vacuously True for any i
+        (range(i, i+0) is empty), BUT the `n_points > 1` filter still
+        applies to the single-plateau window at i. So secondary_start_plateau_idx
+        is the index of the FIRST classified plateau with n_points > 1 --
+        not always 0.
 
-        This makes primary_end_idx =
-            plateaus_for_classification[0 - 1].end_idx
-          = plateaus_for_classification[-1].end_idx  (Python negative index!)
+        Lengths [1, 2, 3, 4, 5]: final plateau (len 5) excluded -> classified
+        over [1, 2, 3, 4]. Plateau 0 has n_points=1, fails the filter.
+        Plateau 1 (n_points=2) is the first to pass -> secondary_start_plateau_idx=1.
 
-        i.e. primary_end_idx ends up equal to the LAST classified plateau's
-        end_idx, not the first. Flag this to yourself before using k1=1 in
-        production -- it is very unlikely to be the intended behavior.
+        => primary_end_plateau_idx = 0 -> primary_end_idx = plateaus_for_classification[0].end_idx = 0
+
+        This is a DIFFERENT edge case from test_flat_run_from_the_start_triggers_secondary_at_zero
+        below: here it's the n_points>1 filter driving the index, not the
+        negative-index wraparound (which only bites when the first
+        classified plateau already has n_points > 1).
         """
         strain = strain_from_plateau_lengths([1, 2, 3, 4, 5])
         test = make_test(strain_series=strain)
 
         result = classify_stages(test, k1=1, k2=2)
 
-        # Pins current (surprising) behavior so a future refactor that
-        # changes it doesn't slip by unnoticed.
-        last_classified_end_idx = _find_plateaus(strain)[-2].end_idx  # [:-1] excludes final
-        assert result.primary_end_idx == last_classified_end_idx
+        assert result.primary_end_idx == 0
 
-    def test_flat_run_from_the_start_triggers_secondary_at_zero(
+    def test_k1_equals_one_all_single_point_plateaus_returns_none(
         self, make_test, strain_from_plateau_lengths
     ):
         """
-        Plateau lengths [3, 3, 3, 3], k1=3: classified over [3, 3, 3]
-        (final plateau excluded). All three are equal (non-increasing under
-        `>=`), so secondary_start_plateau_idx=0 immediately -- exercising
-        the same negative-index edge case as test_k1_equals_one above, but
-        via a tie rather than k1=1.
+        If every classified plateau has n_points == 1 (no plateau ever
+        passes the n_points > 1 filter), secondary_start_plateau_idx stays
+        None regardless of k1=1's vacuous pairwise check -- primary_end_idx
+        and secondary_end_idx should both be None.
         """
-        strain = strain_from_plateau_lengths([3, 3, 3, 3])
+        strain = strain_from_plateau_lengths([1, 1, 1, 1])
         test = make_test(strain_series=strain)
 
-        result = classify_stages(test, k1=3, k2=2)
+        result = classify_stages(test, k1=1, k2=2)
 
-        last_classified_end_idx = _find_plateaus(strain)[-2].end_idx
-        assert result.primary_end_idx == last_classified_end_idx
+        assert result.primary_end_idx is None
+        assert result.secondary_end_idx is None
+

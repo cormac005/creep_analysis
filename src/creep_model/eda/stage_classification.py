@@ -12,8 +12,7 @@ Rule recap:
     - Secondary creep: begins at the first of k1 CONSECUTIVE plateaus where
                         plateau_lengths is non-increasing.
                         -> primary creep ends at the plateau BEFORE this run.
-    - Tertiary creep:  begins after k2 CONSECUTIVE plateaus of STRICTLY
-                        decreasing plateau_lengths.
+    - Tertiary creep:  begins after k2 plateaus shorter than the primary end plateau.
     - The final plateau is always excluded from classification (it ends
       because the test ends, not because of a genuine transition).
 """

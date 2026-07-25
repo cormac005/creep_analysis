@@ -86,7 +86,7 @@ def strain_from_plateau_lengths():
     return _build
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def real_data_path() -> Path:
     """
     Path to the real workbook, used only by integration tests. These tests

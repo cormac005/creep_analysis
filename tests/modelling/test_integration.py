@@ -12,12 +12,6 @@ the exact primary_end_idx/secondary_end_idx per test_id) so a future
 refactor of stage_classification.py that silently changes behavior gets
 caught immediately.
 
-TODO: fill in K1 / K2 below once chosen (see plan Part 4, Step 5 -- these
-should eventually move into CreepConfig in config.py rather than being
-hardcoded here).
-TODO: fill in FAILED_SPECIMEN_IDS with the test_ids of the two specimens
-that failed during testing (per project context) once known, to anchor the
-"failed specimens show tertiary creep" check below.
 """
 from pathlib import Path
 
@@ -27,9 +21,9 @@ from creep_model.io.parser import ExcelCreepParser
 from creep_model.eda.stage_classification import classify_stages
 from creep_model.eda.statistics import build_eda_dataframe
 
-K1 = 3  # TODO: replace with chosen value
-K2 = 2  # TODO: replace with chosen value
-FAILED_SPECIMEN_IDS: list[str] = []  # TODO: e.g. ["H.30.4", "S.30.3"]
+K1 = 3
+K2 = 3
+FAILED_SPECIMEN_IDS: list[str] = ["S.30.2", "H.30.3"]
 
 
 @pytest.fixture(scope="module")
