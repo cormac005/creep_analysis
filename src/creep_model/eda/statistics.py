@@ -93,8 +93,6 @@ def build_eda_dataframe(
      Eps_Tilde_0, Eps_Dot_Ss] for use in the trellis/beeswarm/bubble plots
     already planned for the CSA section.
 
-    TODO(you): implement the loop, calling first_valid_strain and
-    steady_state_strain_rate per test, and pd.DataFrame(records) at the end.
     """
     # Loop over tests and classifications to build a list of records
     records = []

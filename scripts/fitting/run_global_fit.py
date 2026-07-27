@@ -1,7 +1,7 @@
 from pathlib import Path
 from creep_model.io.parser import ExcelCreepParser
-from creep_model.modeling.assembler import DataAssembler
-from creep_model.modeling.empirical import GlobalMSEModel
+from creep_model.modelling.assembler import DataAssembler
+from creep_model.modelling.empirical import GlobalMSEModel
 
 def main():
     parser = ExcelCreepParser(Path("data/raw/CreepData.xlsx"))

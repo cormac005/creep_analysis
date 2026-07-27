@@ -1,6 +1,6 @@
 from pathlib import Path
 from creep_model.io.parser import ExcelCreepParser
-from creep_model.modeling.assembler import DataAssembler
+from creep_model.modelling.assembler import DataAssembler
 
 def main():
     # Load the Excel file and parse the experiment

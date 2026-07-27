@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 from scipy.optimize import minimize
-from creep_model.modeling.base import BaseCreepModel
+from creep_model.modelling.base import BaseCreepModel
 
 class AdvancedLikelihoodCreepModel(BaseCreepModel):
     

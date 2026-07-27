@@ -3,8 +3,8 @@ import numpy as np
 import numpy.typing as npt
 
 from creep_model.domain import CreepTest
-from creep_model.modeling.base import BaseCreepModel
-from creep_model.modeling.assembler import DataAssembler
+from creep_model.modelling.base import BaseCreepModel
+from creep_model.modelling.assembler import DataAssembler
 
 def plot_local_fit(test: CreepTest, model: BaseCreepModel, save_path: str | None = None) -> None:
     """

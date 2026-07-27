@@ -17,7 +17,7 @@ def compute_scale_factors(x_physical: npt.NDArray[np.float64]) -> npt.NDArray[np
     Args:
         x_physical: 1D array of physical-unit parameters (e.g. TLVParameters.to_array()).
     Outputs:
-        1D array of scale factors, same shape as x_physical.
+        
     """
     safe_x = np.where(np.abs(x_physical) > 0, np.abs(x_physical), 1e-12)
     return 10.0 ** np.floor(np.log10(safe_x))

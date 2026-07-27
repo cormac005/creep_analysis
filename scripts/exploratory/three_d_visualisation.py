@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from creep_model.io.parser import ExcelCreepParser
-from creep_model.modeling.assembler import DataAssembler
+from creep_model.modelling.assembler import DataAssembler
 import numpy as np
 import pandas as pd
 import plotly.express as px

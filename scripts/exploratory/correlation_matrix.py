@@ -3,7 +3,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from creep_model.io.parser import ExcelCreepParser
-from creep_model.modeling.assembler import DataAssembler
+from creep_model.modelling.assembler import DataAssembler
 
 def main():
     data_path = Path("data/raw/CreepData.xlsx") 

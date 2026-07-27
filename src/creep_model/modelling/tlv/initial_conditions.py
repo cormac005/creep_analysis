@@ -5,7 +5,7 @@ sigma_ep_0 is a DIRECT MODEL INPUT (the ODE's starting value), not an
 independently-fit validation target -- this was the open question flagged
 in earlier planning and is resolved by Eq. 1.4 itself.
 """
-from creep_model.modeling.tlv.parameters import TLVParameters
+from creep_model.modelling.tlv.parameters import TLVParameters
 
 
 def f_ratio(T_kelvin: float, params: TLVParameters) -> float:

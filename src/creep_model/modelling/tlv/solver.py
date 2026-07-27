@@ -5,9 +5,9 @@ import numpy as np
 import numpy.typing as npt
 
 from creep_model.domain import CreepTest
-from creep_model.modeling.tlv.parameters import TLVParameters
-from creep_model.modeling.tlv.initial_condition import sigma_ep_0
-from creep_model.modeling.tlv.residual import residual, residual_derivative
+from creep_model.modelling.tlv.parameters import TLVParameters
+from creep_model.modelling.tlv.initial_conditions import sigma_ep_0
+from creep_model.modelling.tlv.residual import residual, residual_derivative
 
 
 class SolverConvergenceError(RuntimeError):
