@@ -27,3 +27,16 @@ def sigma_ep_0(applied_stress_MPa: float, T0_kelvin: float, params: TLVParameter
         sigma_ep at t=0, MPa.
     """
     return (1.0 - f_ratio(T0_kelvin, params)) * applied_stress_MPa
+
+def sigma_ep_0_from_measurement(eps_measured_0: float, T0_kelvin: float, params: TLVParameters) -> float:
+    """
+    Alternative initial condition: instead of deriving sigma_ep_0
+    theoretically from Eq. 1.4/1.5 (sigma_ep_0 = (1-f(T0))*sigma), calibrate
+    it directly from the first recorded strain measurement by solving
+    Eq. 1.2b for sigma_ep:
+
+        sigma_ep(t_0) = eps_measured(t_0) * Ee(T(t_0))
+
+    """
+    Ee_T0 = params.at_temperature(T0_kelvin)["Ee"]
+    return eps_measured_0 * Ee_T0

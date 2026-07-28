@@ -6,7 +6,7 @@ import numpy.typing as npt
 
 from creep_model.domain import CreepTest
 from creep_model.modelling.tlv.parameters import TLVParameters
-from creep_model.modelling.tlv.initial_conditions import sigma_ep_0
+from creep_model.modelling.tlv.initial_conditions import sigma_ep_0, sigma_ep_0_from_measurement
 from creep_model.modelling.tlv.residual import residual, residual_derivative
 
 
@@ -84,56 +84,42 @@ def solve_tlv(
     test: CreepTest,
     params: TLVParameters,
     tol: float = 1e-8,
+    use_measured_initial_condition: bool = True,
 ) -> npt.NDArray[np.float64]:
     """
-    Integrate the TLV ODE (Eq. 1.2a) over a single CreepTest's time series,
-    returning the predicted strain trace (Eq. 1.2b).
-
+    ...
     Args:
-        test: the CreepTest to predict on -- should already be TRIMMED of
-              tertiary-creep data if being used for fitting (trimming is the
-              caller's responsibility; see modeling/trimming.py).
-        params: candidate or fitted TLVParameters.
-        tol: Newton-Raphson residual tolerance in MPa.
-
-    Returns:
-        Predicted strain array, same length and time base as test.time_series.
-
-    Raises:
-        SolverConvergenceError if any time step fails to converge -- this is
-        expected to happen for some candidate parameter sets during DE's
-        global search; catch it at the call site (fit_pipeline.py) rather
-        than here.
+        ...
+        use_measured_initial_condition: if True (default), sigma_ep(0) is
+            calibrated from the first measured strain reading via
+            sigma_ep_0_from_measurement rather than derived theoretically
+            (Eq. 1.4). Set False to use the original theoretical IC.
     """
     time = test.time_series
-    # NOTE: interpolate_temperature() resamples temperature onto the STRAIN
-    # time base at the RECORDED time points. The midpoint scheme needs T at
-    # t_n, t_{n+1} (both on that grid -- fine) but does not need T at
-    # arbitrary off-grid midpoints, since T_mid is computed here as the
-    # AVERAGE of T_n and T_next (per Eq. 1.6 applied to T), not by a second,
-    # independent interpolation call. Keep it that way for consistency with
-    # how sigma_ep_mid is defined -- don't swap in np.interp(t_mid, ...) for
-    # T_mid without also reconsidering whether Eq. 1.6 intends the same
-    # midpoint convention for T.
-    T = test.interpolate_temperature()
+
+    # interpolate_temperature() returns Celsius; at_temperature()/its
+    # anchors (T_20_KELVIN, T_30_KELVIN) expect Kelvin. BUG FIX: this
+    # conversion was previously missing entirely -- every at_temperature()
+    # call below was silently extrapolating ~27x beyond the intended
+    # 20-30C window. Converting once here fixes every downstream call.
+    T = test.interpolate_temperature() + 273.15
+
     sigma = test.applied_stress_MPa
 
     sigma_ep = np.empty_like(time)
-    sigma_ep[0] = sigma_ep_0(sigma, T[0], params)
+    if use_measured_initial_condition:
+        sigma_ep[0] = sigma_ep_0_from_measurement(test.strain_series[0], T[0], params)
+    else:
+        sigma_ep[0] = sigma_ep_0(sigma, T[0], params)
 
     for i in range(len(time) - 1):
         dt = time[i + 1] - time[i]
         sigma_ep[i + 1] = _newton_raphson_step(
-            sigma_ep_n=sigma_ep[i],
-            sigma=sigma,
-            T_n=T[i],
-            T_next=T[i + 1],
-            t_n=time[i],
-            dt=dt,
-            params=params,
-            tol=tol,
+            sigma_ep_n=sigma_ep[i], sigma=sigma,
+            T_n=T[i], T_next=T[i + 1],
+            t_n=time[i], dt=dt, params=params, tol=tol,
         )
 
     p_at_T = params.at_temperature(T)
-    strain = sigma_ep / p_at_T["Ee"]  # Eq. 1.2b
+    strain = sigma_ep / p_at_T["Ee"]
     return strain

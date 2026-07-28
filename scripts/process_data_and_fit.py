@@ -28,7 +28,9 @@ K2 = 3
 # Passed to scipy.optimize.differential_evolution -- seed pinned for
 # reproducibility (a fit you can't reproduce isn't thesis-defensible),
 # workers=-1 to parallelise across the population.
-DE_KWARGS = {"seed": 42, "workers": -1}
+# Small Batch Test: {"maxiter": 20, "popsize": 10, "seed": 42, "workers": -1}
+# Real Run: {"seed": 42, "workers": -1}
+DE_KWARGS = {"maxiter": 20, "popsize": 10, "seed": 42, "workers": -1}
 
 
 def main() -> None:
