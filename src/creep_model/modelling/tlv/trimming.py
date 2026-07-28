@@ -14,37 +14,18 @@ from creep_model.eda.stage_classification import classify_stages
 
 def trim_tertiary(test: CreepTest, k1: int, k2: int) -> CreepTest:
     """
-    Remove tertiary-creep data from a single test, using classify_stages'
-    secondary_end_idx as the cutoff.
-
-    Returns a NEW CreepTest (frozen dataclass) truncated at
-    classification.secondary_end_idx. If no tertiary creep was detected
-    (secondary_end_idx already covers the whole test), returns the test
-    unchanged.
-
-    Args:
-        test: a non-empty CreepTest.
-        k1, k2: the FINAL, locked hyperparameters chosen during EDA tuning
-                (see scripts/exploratory/k1_k2_sensitivity.py) -- must match
-                whatever was used to produce the EDA statistics, so the same
-                test isn't classified two different ways in two parts of
-                the thesis.
-
+    ...
     Raises:
-        ValueError if primary_end_idx is None (no secondary creep detected
-        at all under these k1/k2) -- there's no sensible trim point in that
-        case. Consider whether such a test should be excluded from the TLV
-        fit entirely rather than crashing the whole pipeline; if so, catch
-        this in trim_and_partition below and skip with a warning, mirroring
-        io/parser.py's "skip missing sheet" pattern.
+        Nothing anymore for the "primary-only" case -- see below.
     """
     classification = classify_stages(test, k1=k1, k2=k2)
 
     if classification.primary_end_idx is None:
-        raise ValueError(
-            f"Test {test.test_id}: no secondary creep detected with k1={k1}, k2={k2}; "
-            "cannot determine a trim point."
-        )
+        # No secondary-creep onset detected at all under this k1/k2 -- the
+        # test never left primary creep. Tertiary creep can only begin
+        # AFTER secondary onset, so there is nothing to trim here; include
+        # the test unchanged rather than discarding it.
+        return test
 
     end_idx = classification.secondary_end_idx
     if end_idx is None:
@@ -54,11 +35,6 @@ def trim_tertiary(test: CreepTest, k1: int, k2: int) -> CreepTest:
         test,
         time_series=test.time_series[: end_idx + 1],
         strain_series=test.strain_series[: end_idx + 1],
-        # temp_time_series / temperature_readings are on a DIFFERENT, coarser
-        # time base -- do NOT slice them with end_idx (that index refers to
-        # the strain/time_series grid). Leave them full-length;
-        # interpolate_temperature() resamples onto whatever time_series ends
-        # up being, post-trim, automatically.
     )
 
 

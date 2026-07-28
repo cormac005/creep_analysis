@@ -24,11 +24,11 @@ class TLVBounds:
     n_lower: float = 0.0
     n_upper: float = 5.0
     m_lower: float = -5.0
-    m_upper: float = 5.0
-    Ee_lower: float = 0.0
-    Ee_upper: float = np.inf
-    Ev_lower: float = 0.0
-    Ev_upper: float = np.inf
+    m_upper: float = 0.0
+    Ee_lower: float = 0.0   #MPa
+    Ee_upper: float = 500.0 #MPa
+    Ev_lower: float = 0.0   #MPa
+    Ev_upper: float = 500.0 #MPa
 
     @classmethod
     def from_group_data(cls, tests: list[CreepTest], A_upper: float = 1e-5) -> "TLVBounds":

@@ -29,23 +29,51 @@ def _newton_raphson_step(
     dt: float,
     params: TLVParameters,
     tol: float = 1e-8,
-    max_iter: int = 50,
+    max_iter: int = 100,
 ) -> float:
     """
     Solve R(sigma_ep_{n+1}) = 0 for a single time step via Eq. 1.11.
-    Iterates until |R| < tol (MPa), per the thesis's stated convergence
-    criterion.
+
+    NOTE: candidate parameter sets explored during DE's global search
+    routinely produce numerically unstable iterates (overflow in the
+    Norton-Hoff power term, or an overshoot into the unphysical
+    sigma_ep_mid > sigma region). residual()/residual_derivative()
+    correctly raise ValueError/ZeroDivisionError for these states -- that
+    contract is relied on by their own unit tests and must not change.
+    Here, at the solver level, those exceptions are translated into
+    SolverConvergenceError, which fit_pipeline._de_objective already
+    catches and penalises. Without this translation, a single bad DE
+    candidate crashes the entire optimisation run (as seen when this
+    wasn't caught: the ValueError propagated through the multiprocessing
+    pool and killed differential_evolution entirely).
     """
     sigma_ep_guess = sigma_ep_n  # warm start from the previous accepted value
 
     for _ in range(max_iter):
-        R = residual(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params)
+        try:
+            R = residual(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params)
+        except ValueError as e:
+            raise SolverConvergenceError(
+                f"Newton-Raphson stepped into an unphysical state: {e}"
+            ) from e
+
         if abs(R) < tol:
             return sigma_ep_guess
-        dR = residual_derivative(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params)
-        if dR == 0:
-            raise SolverConvergenceError("Newton-Raphson stalled: zero residual derivative.")
+
+        try:
+            dR = residual_derivative(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params)
+        except (ValueError, ZeroDivisionError) as e:
+            raise SolverConvergenceError(
+                f"Newton-Raphson derivative undefined at this state: {e}"
+            ) from e
+
+        if dR == 0 or not np.isfinite(dR):
+            raise SolverConvergenceError("Newton-Raphson stalled: zero or non-finite residual derivative.")
+
         sigma_ep_guess = sigma_ep_guess - R / dR
+
+        if not np.isfinite(sigma_ep_guess):
+            raise SolverConvergenceError("Newton-Raphson diverged to a non-finite value.")
 
     raise SolverConvergenceError(
         f"Newton-Raphson did not converge below tol={tol} MPa within {max_iter} iterations."

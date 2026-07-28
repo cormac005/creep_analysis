@@ -40,24 +40,34 @@ def _lm_residuals(
     scale_factors: npt.NDArray[np.float64],
 ) -> npt.NDArray[np.float64]:
     """
-    Per-point residuals (not squared/aggregated) -- least_squares needs the
-    raw residual vector, concatenated across all tests in the group.
-
-    NOTE: unlike the DE objective, this does NOT catch SolverConvergenceError
-    -- by the time LM runs, the starting point (DE's best result) should
-    already be in a well-converging region. If this raises during LM, that's
-    a signal LM stepped somewhere DE never explored; worth investigating
-    rather than papering over with a penalty here.
+    ...
+    NOTE: earlier versions let SolverConvergenceError propagate uncaught
+    here on the assumption DE's best candidate would always sit in a
+    well-converging region. In practice, LM's finite-difference Jacobian
+    evaluates points just outside x0 by construction, and can briefly
+    probe just outside the stable region -- especially if DE itself
+    didn't fully converge (see fit_group's "DE did not report success"
+    warning). A single such point shouldn't crash the whole pipeline, so
+    it's now penalised with a large-but-finite residual instead, with a
+    printed warning. If this warning fires repeatedly for the same test
+    across many LM iterations, that IS still a signal worth investigating
+    (see original note) -- it's just no longer fatal on its own.
     """
     x_physical = unscale(x_scaled, scale_factors)
     params = TLVParameters.from_array(x_physical)
 
     all_residuals = []
     for test in tests:
-        y_pred = solve_tlv(test, params)
+        try:
+            y_pred = solve_tlv(test, params)
+        except SolverConvergenceError as e:
+            print(f"Warning: solver did not converge during LM refinement "
+                  f"for test {test.test_id} at a probed point ({e}); "
+                  "penalising rather than crashing.")
+            all_residuals.append(np.full_like(test.strain_series, 1e3))
+            continue
         all_residuals.append(y_pred - test.strain_series)
     return np.concatenate(all_residuals)
-
 
 def fit_group(
     tests: list[CreepTest],

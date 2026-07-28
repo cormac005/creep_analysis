@@ -3,12 +3,15 @@ from unittest.mock import MagicMock, patch
 from creep_model.modelling.tlv.trimming import trim_tertiary, trim_and_partition
 
 @patch("creep_model.modelling.tlv.trimming.classify_stages")
-def test_trim_tertiary_no_secondary(mock_classify):
+def test_trim_tertiary_primary_only_returns_unchanged(mock_classify):
+    """primary_end_idx=None means the test never left primary creep --
+    tertiary creep is therefore impossible, so the test should be
+    returned unchanged, not skipped/raised."""
     mock_classify.return_value = MagicMock(primary_end_idx=None)
     test = MagicMock(test_id="T1")
-    
-    with pytest.raises(ValueError, match="no secondary creep detected"):
-        trim_tertiary(test, 10, 20)
+
+    result = trim_tertiary(test, 10, 20)
+    assert result is test
 
 @patch("creep_model.modelling.tlv.trimming.classify_stages")
 def test_trim_tertiary_no_tertiary(mock_classify):

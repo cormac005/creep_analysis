@@ -15,7 +15,8 @@ dependencies = [
     "seaborn>=0.12.0",
     "openpyxl>=3.1.0",
     "plotly>=6.0.0",
-    "scikit-learn>=1.2.0",  # <--- Added for sklearn.metrics (R2 and MSE)
+    "scikit-learn>=1.2.0",  
+    "h5py>=3.8.0",         
 ]
 
 [project.optional-dependencies]

@@ -51,3 +51,9 @@ def test_solve_tlv(mock_nr_step, mock_sigma_0):
     # Expected sigma_ep array: [10.0, 12.0, 14.0], Ee = 2.0 -> strain = sigma_ep / Ee
     np.testing.assert_array_equal(strain, np.array([5.0, 6.0, 7.0]))
     assert mock_nr_step.call_count == 2
+
+@patch("creep_model.modelling.tlv.solver.residual")
+def test_newton_raphson_step_translates_value_error(mock_r):
+    mock_r.side_effect = ValueError("Invalid state: sigma_ep_mid > sigma")
+    with pytest.raises(SolverConvergenceError, match="unphysical state"):
+        _newton_raphson_step(10.0, 5.0, 298, 298, 0.0, 1.0, MagicMock())
