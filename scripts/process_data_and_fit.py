@@ -30,7 +30,7 @@ K2 = 3
 # workers=-1 to parallelise across the population.
 # Small Batch Test: {"maxiter": 20, "popsize": 10, "seed": 42, "workers": -1}
 # Real Run: {"seed": 42, "workers": -1}
-DE_KWARGS = {"maxiter": 20, "popsize": 10, "seed": 42, "workers": -1}
+DE_KWARGS = {"seed": 42, "workers": -1}
 
 
 def main() -> None:
