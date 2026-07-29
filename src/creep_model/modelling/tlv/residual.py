@@ -30,7 +30,6 @@ Eq. 1.2a exactly.
 """
 from creep_model.modelling.tlv.parameters import TLVParameters
 
-
 def _bracket_term(
     sigma_ep_mid: float,
     sigma: float,
@@ -69,12 +68,16 @@ def residual(
     t_n: float,
     dt: float,
     params: TLVParameters,
+    T_dot: float = None,  # <-- NEW: Optional exact derivative
 ) -> float:
     """R(sigma_ep_{n+1}) = sigma_ep_{n+1} - sigma_ep_n - dt * bracket(sigma_ep_mid, ...)."""
     sigma_ep_mid = (sigma_ep_n + sigma_ep_next) / 2.0
     T_mid = (T_n + T_next) / 2.0
-    T_dot = (T_next - T_n) / dt
     t_mid = t_n + dt / 2.0
+    
+    # <-- NEW: Use exact T_dot if provided, otherwise fallback to finite difference
+    if T_dot is None:
+        T_dot = (T_next - T_n) / dt
 
     bracket = _bracket_term(sigma_ep_mid, sigma, T_mid, T_dot, t_mid, params)
     return sigma_ep_next - sigma_ep_n - dt * bracket
@@ -89,6 +92,7 @@ def residual_derivative(
     t_n: float,
     dt: float,
     params: TLVParameters,
+    T_dot: float = None,  # <-- NEW: Optional exact derivative
 ) -> float:
     """
     Analytical Solution for the exact derivative of the residual function 
@@ -96,8 +100,11 @@ def residual_derivative(
     """
     sigma_ep_mid = (sigma_ep_n + sigma_ep_next) / 2.0
     T_mid = (T_n + T_next) / 2.0
-    T_dot = (T_next - T_n) / dt
     t_mid = t_n + dt / 2.0
+    
+    # <-- NEW: Use exact T_dot if provided, otherwise fallback to finite difference
+    if T_dot is None:
+        T_dot = (T_next - T_n) / dt
 
     p_mid = params.at_temperature(T_mid)
     Ee, Ev, A, n, m = p_mid["Ee"], p_mid["Ev"], p_mid["A"], p_mid["n"], p_mid["m"]

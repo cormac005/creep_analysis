@@ -20,7 +20,7 @@ def main():
     
     data_path = project_root / "data/processed/tlv_fit_results.h5"
     raw_path = project_root / "data/raw/CreepData.xlsx"
-    output_dir = project_root / "plots/new"
+    output_dir = project_root / "plots/eps_v_time"
     
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)

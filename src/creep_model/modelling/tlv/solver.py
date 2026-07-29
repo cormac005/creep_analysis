@@ -28,6 +28,7 @@ def _newton_raphson_step(
     t_n: float,
     dt: float,
     params: TLVParameters,
+    T_dot: float,  # <-- NEW: Exact analytical temperature derivative
     tol: float = 1e-8,
     max_iter: int = 100,
 ) -> float:
@@ -51,7 +52,8 @@ def _newton_raphson_step(
 
     for _ in range(max_iter):
         try:
-            R = residual(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params)
+            # Pass the exact T_dot to the residual
+            R = residual(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params, T_dot=T_dot)
         except ValueError as e:
             raise SolverConvergenceError(
                 f"Newton-Raphson stepped into an unphysical state: {e}"
@@ -61,7 +63,8 @@ def _newton_raphson_step(
             return sigma_ep_guess
 
         try:
-            dR = residual_derivative(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params)
+            # Pass the exact T_dot to the derivative
+            dR = residual_derivative(sigma_ep_guess, sigma_ep_n, sigma, T_n, T_next, t_n, dt, params, T_dot=T_dot)
         except (ValueError, ZeroDivisionError) as e:
             raise SolverConvergenceError(
                 f"Newton-Raphson derivative undefined at this state: {e}"
@@ -88,20 +91,21 @@ def solve_tlv(
 ) -> npt.NDArray[np.float64]:
     """
     ...
-    Args:
-        ...
-        use_measured_initial_condition: if True (default), sigma_ep(0) is
-            calibrated from the first measured strain reading via
-            sigma_ep_0_from_measurement rather than derived theoretically
-            (Eq. 1.4). Set False to use the original theoretical IC.
     """
     time = test.time_series
 
-    # interpolate_temperature() returns Celsius; at_temperature()/its
-    # anchors (T_20_KELVIN, T_30_KELVIN) expect Kelvin. BUG FIX: this
-    # conversion was previously missing entirely -- every at_temperature()
-    # call below was silently extrapolating ~27x beyond the intended
-    # 20-30C window. Converting once here fixes every downstream call.
+    # 1. UPDATE: Call the new polynomial method
+    temp_poly = test.temperature_polynomial()
+    
+    # Generate the exact derivative (numpy poly1d uses .deriv())
+    temp_deriv_poly = temp_poly.deriv()
+    
+    # Extract boundaries for the clamping logic
+    t_min = float(test.temp_time_series.min())
+    t_max = float(test.temp_time_series.max())
+
+    # at_temperature()/its anchors (T_20_KELVIN, T_30_KELVIN) expect Kelvin. 
+    # interpolate_temperature() safely applies the np.clip clamping.
     T = test.interpolate_temperature() + 273.15
 
     sigma = test.applied_stress_MPa
@@ -114,10 +118,20 @@ def solve_tlv(
 
     for i in range(len(time) - 1):
         dt = time[i + 1] - time[i]
+        t_mid = time[i] + dt / 2.0
+        
+        # 2. UPDATE: Respect the clamping logic for the derivative!
+        # If the time is outside the recorded window, T is constant, so T_dot MUST be 0.
+        if t_mid < t_min or t_mid > t_max:
+            T_dot_mid = 0.0
+        else:
+            T_dot_mid = float(temp_deriv_poly(t_mid))
+        
         sigma_ep[i + 1] = _newton_raphson_step(
             sigma_ep_n=sigma_ep[i], sigma=sigma,
             T_n=T[i], T_next=T[i + 1],
-            t_n=time[i], dt=dt, params=params, tol=tol,
+            t_n=time[i], dt=dt, params=params, 
+            T_dot=T_dot_mid, tol=tol,
         )
 
     p_at_T = params.at_temperature(T)
