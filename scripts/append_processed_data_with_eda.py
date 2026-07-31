@@ -1,11 +1,11 @@
 """
-Append EDA summary statistics (eps_tilde_0, eps_dot_ss, mean secondary-creep
-temperature) to an already-produced tlv_fit_results.h5, without re-running
-the expensive DE->LM fit in process_data_and_fit.py.
+Append EDA summary statistics and temperature arrays to an already-produced 
+tlv_fit_results.h5, without re-running the expensive DE->LM fit in 
+process_data_and_fit.py.
 
 Run this AFTER process_data_and_fit.py -- it opens that file in APPEND
 mode and adds data alongside the existing fitted_parameters/tests groups,
-it does not touch or recompute anything already in there.
+it does not touch or recompute the model parameters already in there.
 """
 from pathlib import Path
 
@@ -32,6 +32,7 @@ def main() -> None:
             f"{OUTPUT_PATH} does not exist yet -- run process_data_and_fit.py first."
         )
 
+    print(f"Loading raw data from {DATA_PATH}...")
     parser = ExcelCreepParser(DATA_PATH)
     experiment = parser.load_experiment()
 
@@ -41,31 +42,68 @@ def main() -> None:
     }
     df = build_eda_dataframe(completed, classifications)
 
+    # --- NEW: Calculate Initial_Temp_C for every test ---
+    initial_temps = []
+    for test_id in df["Test_ID"]:
+        t_obj = experiment.tests[test_id]
+        # Get the very first timestamp recorded for strain
+        t0 = t_obj.time_series[0]
+        # Evaluate the temperature polynomial at t0 (with clamping just to be safe)
+        t0_clamped = np.clip(t0, t_obj.temp_time_series.min(), t_obj.temp_time_series.max())
+        temp_0 = t_obj.temperature_polynomial()(t0_clamped)
+        initial_temps.append(temp_0)
+        
+    # Append it as a new column to the dataframe
+    df["Initial_Temp_C"] = initial_temps
+
+    print(f"Opening {OUTPUT_PATH} to append EDA stats and Temperature data...")
     with h5py.File(OUTPUT_PATH, "a") as f:
-        # 1. Attach per-test EDA stats onto the existing per-test groups
-        #    (created by process_data_and_fit.py), so anything plotting a
-        #    single test can pull both the TLV fit arrays and the EDA
-        #    stats from one place.
+        # 1. Attach per-test EDA stats and Temperature arrays onto the existing per-test groups
         tests_group = f.require_group("tests")
         for _, row in df.iterrows():
             test_id = row["Test_ID"]
+            
             if test_id not in tests_group:
-                # This test had no successful TLV fit entry (e.g. the
-                # solver never converged for it during LM) -- still record
-                # its EDA stats rather than silently dropping them.
                 t_group = tests_group.create_group(test_id)
             else:
                 t_group = tests_group[test_id]
 
+            # --- Append EDA Attributes ---
             t_group.attrs["eps_tilde_0"] = row["Eps_Tilde_0"]
             t_group.attrs["eps_dot_ss"] = row["Eps_Dot_Ss"]
+            t_group.attrs["initial_temp_c"] = row["Initial_Temp_C"] # Added this!
             t_group.attrs["mean_temp_c_secondary_creep"] = row["Mean_Temp_C_Secondary_Creep"]
             t_group.attrs["k1"] = K1
             t_group.attrs["k2"] = K2
 
-        # 2. Also store one consolidated table at the root -- convenient
-        #    for loading straight into a DataFrame for the EDA plots
-        #    without walking every test group individually.
+            # --- Append Temperature Datasets ---
+            t_obj = experiment.tests[test_id]
+            
+            # Safely delete existing temperature datasets if re-running this script
+            for ds in ["temp_time_s", "temperature_raw", "temperature_interpolated"]:
+                if ds in t_group:
+                    del t_group[ds]
+            
+            # Save the raw, coarse temperature grid
+            t_group.create_dataset("temp_time_s", data=t_obj.temp_time_series)
+            t_group.create_dataset("temperature_raw", data=t_obj.temperature_readings)
+            
+            # If the test was successfully fitted, it will have a 'time_s' array. 
+            if "time_s" in t_group:
+                time_s = t_group["time_s"][:]
+                poly = t_obj.temperature_polynomial()
+                
+                # Apply the same clamping logic from domain.py
+                t_clamped = np.clip(
+                    time_s,
+                    t_obj.temp_time_series.min(),
+                    t_obj.temp_time_series.max()
+                )
+                
+                temperature_interpolated = poly(t_clamped)
+                t_group.create_dataset("temperature_interpolated", data=temperature_interpolated)
+
+        # 2. Store one consolidated EDA table at the root
         if "eda_summary" in f:
             del f["eda_summary"]  # overwrite cleanly if this script is re-run
         eda_group = f.create_group("eda_summary")
@@ -76,12 +114,12 @@ def main() -> None:
             "Print_Quality", data=np.array(df["Print_Quality"], dtype=h5py.string_dtype())
         )
         for col in [
-            "Applied_Stress_MPa", "Age_Days",
+            "Applied_Stress_MPa", "Age_Days", "Initial_Temp_C", # Added Initial_Temp_C here!
             "Mean_Temp_C_Secondary_Creep", "Eps_Tilde_0", "Eps_Dot_Ss",
         ]:
             eda_group.create_dataset(col, data=df[col].to_numpy(dtype=np.float64))
 
-    print(f"Appended EDA statistics for {len(df)} test(s) to {OUTPUT_PATH}")
+    print(f"Successfully appended EDA statistics and Temperature arrays for {len(df)} test(s).")
 
 
 if __name__ == "__main__":
