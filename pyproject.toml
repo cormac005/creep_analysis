@@ -31,6 +31,9 @@ dev = [
 # Replace 'creep_model' with the exact name of your source code directory if different
 addopts = "--cov=creep_model --cov-report=term-missing"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:vert:matplotlib.MatplotlibDeprecationWarning:seaborn.*:",
+]
 
 [tool.coverage.run]
 # Ensures that even files not explicitly imported or executed by a specific test run 

@@ -12,6 +12,6 @@ __pycache__/
 # Ignore environment files
 .env
 
-# Ignore the outputs directory
+# Ignore the outputs folder
 outputs/*
 !outputs/.keep

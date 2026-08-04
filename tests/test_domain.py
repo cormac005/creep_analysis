@@ -91,25 +91,6 @@ class TestInterpolateTemperature:
         np.testing.assert_allclose(interp, [20.0, 21.0, 22.0, 23.0, 24.0])
 
     def test_nan_in_temperature_readings_is_not_filtered(self, make_test):
-        """
-        KNOWN BUG: interpolate_temperature() computes `valid_mask =
-        ~np.isnan(self.temperature_readings)` but never uses it -- dead
-        code. np.interp has no NaN-awareness, so a NaN anywhere in
-        temperature_readings poisons every interpolated point that falls
-        between the NaN's neighbouring temp_time_series entries (not just
-        the exact NaN timestamp).
-
-        In practice this doesn't currently bite real data, because
-        io/parser.py already drops NaN temperature rows via
-        `df_temp.dropna()` before a CreepTest is ever constructed -- so a
-        CreepTest built by the real pipeline never has NaNs here. It WOULD
-        bite any future code path that constructs CreepTest directly from
-        partially-missing sensor data (e.g. a live/ongoing-test ingestion
-        path) without the same upstream dropna(). This test pins the
-        CURRENT (buggy) behaviour so a silent "fix" doesn't regress
-        unnoticed, and flags it for a real fix (filter using valid_mask
-        before interpolating) if that use case ever appears.
-        """
         test = make_test(
             strain_series=np.arange(5, dtype=np.float64),
             time_series=np.array([0.0, 1.0, 2.0, 3.0, 4.0]),
@@ -117,16 +98,9 @@ class TestInterpolateTemperature:
             temperature_readings=np.array([20.0, np.nan, 24.0]),
         )
         interp = test.interpolate_temperature()
-        # np.interp returns the exact fp value at points that exactly match
-        # an xp entry (t=0.0 -> 20.0, t=4.0 -> 24.0), so those two endpoints
-        # stay finite. Every OTHER point (t=1,2,3) falls strictly between
-        # two xp entries that bracket the NaN and gets poisoned to NaN --
-        # this is the actual shape of the "unused valid_mask" bug: not a
-        # total wipeout, but silent NaN contamination of every interior
-        # point near a missing temperature reading.
-        assert not np.isnan(interp[0])
-        assert not np.isnan(interp[-1])
-        assert np.isnan(interp[1:-1]).all()
+
+        expected = np.array([20.0, 21.0, 22.0, 23.0, 24.0])
+        np.testing.assert_allclose(interp, expected, atol=1e-8)
 
 
 class TestCreepExperiment:

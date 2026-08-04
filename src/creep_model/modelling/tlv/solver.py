@@ -28,7 +28,7 @@ def _newton_raphson_step(
     t_n: float,
     dt: float,
     params: TLVParameters,
-    T_dot: float,  # <-- NEW: Exact analytical temperature derivative
+    T_dot: float,  
     tol: float = 1e-8,
     max_iter: int = 100,
 ) -> float:

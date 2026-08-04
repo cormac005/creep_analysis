@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 from creep_model.modelling.empirical import (
     findley_law, modified_findley_law, global_creep_law,
     LocalFindleyModel, QuantizedFindleyModel, LocalModifiedFindleyModel, 
-    GlobalMLEModel, GlobalMSEModel
+    GlobalMSEModel
 )
 
 def test_math_laws():
@@ -80,20 +80,6 @@ def test_local_modified_findley_model_mle_loss():
     y_obs = np.array([1.0])
     loss = model._default_rounded_mle_loss(params, time, y_obs)
     assert isinstance(loss, float)
-
-@patch("creep_model.modelling.empirical.minimize")
-def test_global_mle_model(mock_min):
-    # Test Failed optimization branch
-    mock_min.return_value = MagicMock(success=False, message="failed", x=np.array([1, 2, 3, 4]))
-    model = GlobalMLEModel()
-    
-    # X needs to be 2D matrix shape (2, N) for the global models!
-    X = np.array([[1.0], [2.0]])
-    model.fit(X, np.array([1]))
-    
-    # Since the user code literally has `nll_value = ...` 
-    # it returns Ellipsis. Test it returns what's inside.
-    assert model._negative_log_likelihood([1, 1, 1, 1], X, np.array([1])) is Ellipsis
 
 @patch("creep_model.modelling.empirical.curve_fit")
 def test_global_mse_model(mock_cf):

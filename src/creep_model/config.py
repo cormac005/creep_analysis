@@ -7,6 +7,8 @@ class CreepConfig:
     # File configuration
     data_directory: str = "data/raw"
     metadata_sheet_name: str = "MetaData"
+    data_output_directory: str = "data/processed"
+    general_output_directory: str = "outputs"
 
     # Constants for the creep test
     gauge_length_mm: float = 20.0  # Gauge length in millimeters

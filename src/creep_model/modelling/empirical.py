@@ -269,46 +269,6 @@ class LocalModifiedFindleyModel(BaseCreepModel):
         if not hasattr(self, "fitted_params_"):
             raise ValueError("Model not fitted.")
         return modified_findley_law(X.flatten(), *self.fitted_params_)
-
-
-class GlobalMLEModel(BaseCreepModel):
-    def __init__(self, sensor_resolution: float = 0.01):
-        super().__init__()
-        self.resolution = sensor_resolution
-        self.p0 = [1e-3, 1e-4, 2.0, 0.3] # [A, B, n, m]
-
-    def _negative_log_likelihood(self, params: list[float], X: npt.NDArray[np.float64], y_true: npt.NDArray[np.float64]) -> float:
-        """
-        The custom loss function. Scipy will try to MINIMIZE this value.
-        """
-        A, B, n, m = params
-        y_pred = global_creep_law(X, A, B, n, m)
-        
-        # -------------------------------------------------------------
-        # TODO for you (Literature Review Integration):
-        # Calculate the Negative Log-Likelihood (NLL) here.
-        # Simple Gaussian MSE proxy: np.sum((y_pred - y_true)**2)
-        # For quantization, you will write custom probability logic.
-        # -------------------------------------------------------------
-        nll_value = ... 
-        
-        return nll_value
-
-    def fit(self, X: npt.NDArray[np.float64], y: npt.NDArray[np.float64]) -> "GlobalMLEModel":
-        # Minimize the custom NLL
-        result = minimize(
-            fun=self._negative_log_likelihood,
-            x0=self.p0,
-            args=(X, y),
-            method='Nelder-Mead', # Often better than L-BFGS-B for custom/staircase likelihoods
-            options={'maxiter': 10000}
-        )
-        
-        if not result.success:
-            print(f"Warning: Optimizer failed to converge: {result.message}")
-            
-        self.fitted_params_ = result.x
-        return self
     
 class GlobalMSEModel(BaseCreepModel):
     """Fits all tests simultaneously using Least Squares (MSE)."""
