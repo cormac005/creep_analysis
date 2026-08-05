@@ -9,7 +9,6 @@ from creep_model.modelling.tlv.forward_model import TLVCreepModel
 
 @patch("creep_model.modelling.tlv.fit_pipeline.solve_tlv")
 def test_group_mse(mock_solve):
-    # Pred: [2, 2], Actual: [0, 0] -> diff = 2 -> squared diff = 4 -> mean = 4
     mock_solve.return_value = np.array([2.0, 2.0])
     test = MagicMock(strain_series=np.array([0.0, 0.0]))
     assert _group_mse(MagicMock(), [test]) == 4.0
@@ -20,11 +19,9 @@ def test_de_objective(mock_mse):
     mock_bounds = MagicMock()
     mock_bounds.denormalize.return_value = MagicMock()
     
-    # Test success
     res = _de_objective(np.ones(10), [], mock_bounds)
     assert res == 0.5
     
-    # Test penalty catch
     mock_mse.side_effect = SolverConvergenceError("failed")
     res2 = _de_objective(np.ones(10), [], mock_bounds)
     assert res2 == _NON_CONVERGENCE_PENALTY
@@ -33,14 +30,23 @@ def test_de_objective(mock_mse):
 @patch("creep_model.modelling.tlv.fit_pipeline.unscale")
 @patch("creep_model.modelling.tlv.parameters.TLVParameters.from_array")
 def test_lm_residuals(mock_from_array, mock_unscale, mock_solve):
-    # Returns 10 ones since TLV params has 10 fields
     mock_unscale.return_value = np.ones(10)
     mock_solve.return_value = np.array([5.0, 6.0])
     
-    test = MagicMock(strain_series=np.array([5.0, 5.0]))
+    test = MagicMock(strain_series=np.array([5.0, 5.0]), test_id="T1")
     res = _lm_residuals(np.ones(10), [test], np.ones(10))
-    
     np.testing.assert_array_equal(res, np.array([0.0, 1.0]))
+
+@patch("creep_model.modelling.tlv.fit_pipeline.solve_tlv")
+@patch("creep_model.modelling.tlv.fit_pipeline.unscale")
+@patch("creep_model.modelling.tlv.parameters.TLVParameters.from_array")
+def test_lm_residuals_convergence_error(mock_from_array, mock_unscale, mock_solve):
+    mock_unscale.return_value = np.ones(10)
+    mock_solve.side_effect = SolverConvergenceError("solver failed")
+    
+    test = MagicMock(strain_series=np.array([5.0, 5.0]), test_id="T1")
+    res = _lm_residuals(np.ones(10), [test], np.ones(10))
+    np.testing.assert_array_equal(res, np.array([1000.0, 1000.0]))
 
 @patch("creep_model.modelling.tlv.fit_pipeline.differential_evolution")
 @patch("creep_model.modelling.tlv.fit_pipeline.least_squares")
@@ -49,23 +55,20 @@ def test_fit_group(mock_scale_factors, mock_least_squares, mock_de):
     mock_bounds = MagicMock()
     mock_bounds.as_unit_bounds.return_value = []
     
-    # Ensure params_physical.to_array() returns 10 elements for from_array downstream
     mock_params = MagicMock()
     mock_params.to_array.return_value = np.ones(10)
     mock_bounds.denormalize.return_value = mock_params
     
-    mock_de_res = MagicMock(success=False, message="failed", fun=0.1, x=np.ones(10))
+    mock_de_res = MagicMock(success=False, message="failed", fun=_NON_CONVERGENCE_PENALTY, x=np.ones(10))
     mock_de.return_value = mock_de_res
     
     mock_ls_res = MagicMock(success=False, message="failed", x=np.ones(10))
     mock_least_squares.return_value = mock_ls_res
     mock_scale_factors.return_value = np.ones(10)
     
-    # Should not raise TypeError as x arrays now correctly mimic 10 variables
     res = fit_group([], mock_bounds)
     assert res is not None
 
-# Tests for Forward Model
 def test_tlv_creep_model():
     model = TLVCreepModel()
     with pytest.raises(NotImplementedError):

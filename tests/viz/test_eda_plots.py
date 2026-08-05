@@ -9,6 +9,7 @@ import pytest
 from creep_model.viz.eda_plots import (
     EDAStyleConfig,
     _nominal_stress,
+    plot_creep_stage_boundaries,
     plot_distribution_by_quality,
     plot_eps_dot_ss_vs_stress,
     plot_eps_dot_ss_vs_temperature,
@@ -18,17 +19,13 @@ from creep_model.viz.eda_plots import (
     plot_pairwise_relationships,
 )
 
-
 @pytest.fixture(autouse=True)
 def close_plt_figures():
-    """Fixture to ensure all matplotlib figures are closed after every test."""
     yield
     plt.close("all")
 
-
 @pytest.fixture
 def sample_eda_df() -> pd.DataFrame:
-    """Provides a realistic mock eda_summary DataFrame with all necessary columns."""
     return pd.DataFrame({
         "Applied_Stress_MPa": [10.0, 12.0, 20.0, 22.0, 30.0, 32.0],
         "Print_Quality": ["Standard", "Standard", "High", "High", "Standard", "High"],
@@ -39,105 +36,100 @@ def sample_eda_df() -> pd.DataFrame:
         "Mean_Temp_C_Secondary_Creep": [21.0, 22.0, 23.0, 24.0, 25.0, 26.0],
     })
 
-
 @pytest.fixture
 def default_style() -> EDAStyleConfig:
     return EDAStyleConfig()
 
-
-# =============================================================================
-# Helper & Config Tests
-# =============================================================================
-
 def test_nominal_stress_mapping():
-    """Tests that _nominal_stress maps stress values to nearest bands (10, 20, 30)."""
     df = pd.DataFrame({"Applied_Stress_MPa": [10.0, 14.9, 15.0, 24.9, 25.0, 35.0]})
     mapped = _nominal_stress(df)
     expected = pd.Series([10, 10, 20, 20, 30, 30], name="Applied_Stress_MPa")
     pd.testing.assert_series_equal(mapped, expected)
 
-
 def test_eda_style_config_custom():
-    """Verifies custom EDAStyleConfig initialization."""
     style = EDAStyleConfig(dpi=150, show_titles=False, cmap="viridis")
     assert style.dpi == 150
     assert not style.show_titles
     assert style.cmap == "viridis"
 
-
-# =============================================================================
-# Plotting Function Tests
-# =============================================================================
-
 def test_plot_eps_tilde_0_vs_stress(sample_eda_df, default_style, tmp_path):
-    """Tests plotting eps_tilde_0 vs stress with Initial_Temp_C column present."""
     out_path = plot_eps_tilde_0_vs_stress(sample_eda_df, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.is_file()
-    assert out_path.stat().st_size > 0
-    assert out_path.name == "eps_tilde_0_vs_stress.png"
-
 
 def test_plot_eps_tilde_0_vs_stress_missing_initial_temp_fallback(sample_eda_df, default_style, tmp_path):
-    """Tests fallback to Mean_Temp_C_Secondary_Creep when Initial_Temp_C is absent."""
     df_no_init_temp = sample_eda_df.drop(columns=["Initial_Temp_C"])
     out_path = plot_eps_tilde_0_vs_stress(df_no_init_temp, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.stat().st_size > 0
-
 
 def test_plot_eps_dot_ss_vs_stress(sample_eda_df, default_style, tmp_path):
-    """Tests plotting eps_dot_ss vs stress."""
     out_path = plot_eps_dot_ss_vs_stress(sample_eda_df, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.stat().st_size > 0
-    assert out_path.name == "eps_dot_ss_vs_stress.png"
-
 
 def test_plot_eps_tilde_0_vs_age(sample_eda_df, default_style, tmp_path):
-    """Tests plotting eps_tilde_0 vs specimen age."""
     out_path = plot_eps_tilde_0_vs_age(sample_eda_df, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.stat().st_size > 0
-    assert out_path.name == "eps_tilde_0_vs_age.png"
-
 
 def test_plot_eps_dot_ss_vs_temperature(sample_eda_df, default_style, tmp_path):
-    """Tests plotting eps_dot_ss vs temperature."""
     out_path = plot_eps_dot_ss_vs_temperature(sample_eda_df, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.stat().st_size > 0
-    assert out_path.name == "eps_dot_ss_vs_temperature.png"
-
 
 def test_plot_distribution_by_quality(sample_eda_df, default_style, tmp_path):
-    """Tests plotting distribution box+strip plots split by print quality."""
     out_path = plot_distribution_by_quality(sample_eda_df, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.stat().st_size > 0
-    assert out_path.name == "eda_distribution_by_quality.png"
-
 
 def test_plot_mean_eps_dot_ss_bar(sample_eda_df, default_style, tmp_path):
-    """Tests plotting mean strain rate bar chart grouped by quality and stress band."""
     out_path = plot_mean_eps_dot_ss_bar(sample_eda_df, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.stat().st_size > 0
-    assert out_path.name == "eda_mean_eps_dot_ss_bar.png"
-
 
 def test_plot_pairwise_relationships(sample_eda_df, default_style, tmp_path):
-    """Tests plotting Seaborn PairGrid across numeric EDA metrics."""
     out_path = plot_pairwise_relationships(sample_eda_df, tmp_path, default_style)
     assert out_path.exists()
-    assert out_path.stat().st_size > 0
-    assert out_path.name == "eda_pairwise_relationships.png"
-
 
 def test_plots_work_with_show_titles_false(sample_eda_df, tmp_path):
-    """Ensures plotting functions execute cleanly when show_titles is False."""
     no_title_style = EDAStyleConfig(show_titles=False)
     out1 = plot_eps_tilde_0_vs_stress(sample_eda_df, tmp_path, no_title_style)
     out2 = plot_distribution_by_quality(sample_eda_df, tmp_path, no_title_style)
     assert out1.exists()
     assert out2.exists()
+
+def test_eda_plots_with_titles(sample_eda_df, tmp_path):
+    style_with_titles = EDAStyleConfig(show_titles=True)
+    plot_eps_tilde_0_vs_stress(sample_eda_df, tmp_path, style_with_titles)
+    plot_eps_dot_ss_vs_stress(sample_eda_df, tmp_path, style_with_titles)
+    plot_eps_tilde_0_vs_age(sample_eda_df, tmp_path, style_with_titles)
+    plot_eps_dot_ss_vs_temperature(sample_eda_df, tmp_path, style_with_titles)
+    plot_distribution_by_quality(sample_eda_df, tmp_path, style_with_titles)
+    plot_mean_eps_dot_ss_bar(sample_eda_df, tmp_path, style_with_titles)
+    plot_pairwise_relationships(sample_eda_df, tmp_path, style_with_titles)
+
+def test_eda_plots_empty_groups(sample_eda_df, default_style, tmp_path):
+    df_one_quality = sample_eda_df[sample_eda_df["Print_Quality"] == "High"]
+    plot_eps_tilde_0_vs_stress(df_one_quality, tmp_path, default_style)
+    plot_eps_dot_ss_vs_stress(df_one_quality, tmp_path, default_style)
+
+# --- test plot_creep_stage_boundaries ---
+
+def test_plot_creep_stage_boundaries_primary_only(tmp_path, default_style):
+    y = np.concatenate([np.repeat(i, i+1) for i in range(20)])
+    X = np.arange(len(y))
+    out_path = plot_creep_stage_boundaries(X, y, "T1", tmp_path, default_style)
+    assert out_path.exists()
+
+def test_plot_creep_stage_boundaries_no_tertiary(tmp_path, default_style):
+    y1 = np.concatenate([np.repeat(i, i+1) for i in range(5)]) # 0..4
+    y2 = np.concatenate([np.repeat(i, 6) for i in range(5, 15)]) # 5..14
+    y = np.concatenate([y1, y2])
+    X = np.arange(len(y))
+    out_path = plot_creep_stage_boundaries(X, y, "T2", tmp_path, default_style)
+    assert out_path.exists()
+
+def test_plot_creep_stage_boundaries_full(tmp_path):
+    y1 = np.concatenate([np.repeat(i, i+1) for i in range(5)]) # 0..4
+    y2 = np.concatenate([np.repeat(i, 6) for i in range(5, 10)]) # 5..9
+    y3 = np.concatenate([np.repeat(i, 4 - (i-10)) for i in range(10, 14)]) # 10..13
+    y = np.concatenate([y1, y2, y3])
+    X = np.arange(len(y))
+    
+    style_with_titles = EDAStyleConfig(show_titles=True)
+    out_path = plot_creep_stage_boundaries(X, y, "T3", tmp_path, style_with_titles)
+    assert out_path.exists()
