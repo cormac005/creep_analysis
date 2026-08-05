@@ -78,28 +78,129 @@ def _collect_test_groups(group):
     return test_nodes
 
 
+def calculate_fit_stats(y_true, y_pred):
+    """Computes R^2, RMSE, MAPE, e_max, and SSE."""
+    y_true = np.asarray(y_true).ravel()
+    y_pred = np.asarray(y_pred).ravel()
+
+    # Guard against empty arrays
+    if len(y_true) == 0 or len(y_pred) == 0:
+        return {}
+
+    # Filter out NaNs to prevent math errors propagating to statistics
+    valid = ~(np.isnan(y_true) | np.isnan(y_pred))
+    if not np.any(valid):
+        return {}
+        
+    y_true = y_true[valid]
+    y_pred = y_pred[valid]
+
+    residuals = y_true - y_pred
+    sse = float(np.sum(residuals**2))
+    rmse = float(np.sqrt(np.mean(residuals**2)))
+
+    non_zero = y_true != 0
+    mape = (
+        float(np.mean(np.abs(residuals[non_zero] / y_true[non_zero])) * 100)
+        if np.any(non_zero)
+        else np.nan
+    )
+
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    r2 = float(1.0 - (sse / ss_tot)) if ss_tot != 0 else np.nan
+    max_err = float(np.max(np.abs(residuals)))
+
+    return {"r2": r2, "rmse": rmse, "mape": mape, "max_err": max_err, "sse": sse}
+
+
+def calculate_group_stats(f: h5py.File, quality: str) -> dict:
+    """
+    Robustly traverses the HDF5 file to find all tests belonging to a specific print quality,
+    concatenates their measured and predicted strains, and computes global fit statistics.
+    """
+    if "tests" not in f:
+        return {}
+
+    # Reuse recursive search so it is immune to HDF5 hierarchy variations
+    test_nodes = _collect_test_groups(f["tests"])
+    
+    all_y_true = []
+    all_y_pred = []
+
+    # Gather data from every test matching this print quality attribute
+    for test_id, test_grp in test_nodes:
+        q = test_grp.attrs.get("print_quality")
+        if isinstance(q, bytes):
+            q = q.decode("utf-8")
+            
+        if q == quality:
+            all_y_true.append(test_grp["strain_measured"][:])
+            all_y_pred.append(test_grp["strain_predicted"][:])
+
+    if not all_y_true:
+        return {}
+
+    # Concatenate all tests to calculate global summary metrics for the model
+    y_true_concat = np.concatenate(all_y_true)
+    y_pred_concat = np.concatenate(all_y_pred)
+
+    return calculate_fit_stats(y_true_concat, y_pred_concat)
+
+
+def format_latex_val(val, fmt):
+    """Formats values into LaTeX string, converting e-notation ($A \times 10^{B}$)."""
+    if val is None or val == "N/A":
+        return "N/A"
+    
+    # Securely trap NaNs (accounting for numpy floats vs python floats)
+    if isinstance(val, (float, np.floating)) and np.isnan(val):
+        return "N/A"
+
+    try:
+        formatted = fmt.format(val)
+    except (ValueError, TypeError):
+        return "N/A"
+
+    if "e" in formatted:
+        formatted = (
+            formatted.replace("e", r" \times 10^{")
+            .replace("+0", "")
+            .replace("+", "")
+            .replace("-0", "-")
+            + "}"
+        )
+        formatted = f"${formatted}$"
+
+    return formatted
+
+
 def generate_parameter_table():
-    """Reads fitted TLV parameters from HDF5 and formats them into a LaTeX table."""
+    """Reads fitted TLV parameters & calculates/reads summary stats to format a LaTeX table."""
     if not H5_PATH.exists():
         raise FileNotFoundError(f"Cannot generate table: {H5_PATH} does not exist.")
 
     OUTPUT_TEX.parent.mkdir(parents=True, exist_ok=True)
 
-    # 1. Read parameters from the HDF5 file
+    high_attrs, std_attrs = {}, {}
+    high_stats, std_stats = {}, {}
+
     with h5py.File(H5_PATH, "r") as f:
-        if "fitted_parameters" not in f:
+        # 1. Read fitted parameters (Attributes)
+        if "fitted_parameters" in f:
+            fit_grp = f["fitted_parameters"]
+            if "High" in fit_grp:
+                high_attrs.update(fit_grp["High"].attrs)
+            if "Standard" in fit_grp:
+                std_attrs.update(fit_grp["Standard"].attrs)
+        else:
             print("Warning: 'fitted_parameters' group not found in HDF5 file.")
-            return
 
-        high = dict(f["fitted_parameters"]["High"].attrs) if "High" in f["fitted_parameters"] else {}
-        std = dict(f["fitted_parameters"]["Standard"].attrs) if "Standard" in f["fitted_parameters"] else {}
+        # 2. Calculate summary statistics dynamically directly from test Datasets
+        high_stats = calculate_group_stats(f, "High")
+        std_stats = calculate_group_stats(f, "Standard")
 
-    if not high and not std:
-        print("Warning: No fitted parameters available for LaTeX table generation.")
-        return
-
-    # 2. Define the table rows, formatting, and mathematical symbols
-    rows = [
+    # Model parameters rows
+    param_rows = [
         (r"$A_{20}$", r"$\text{MPa}^{-n}\cdot\text{s}^{-(m+1)}$", "A20", "{:.2e}"),
         (r"$A_{30}$", r"$\text{MPa}^{-n}\cdot\text{s}^{-(m+1)}$", "A30", "{:.2e}"),
         (r"$n_{20}$", r"--", "n20", "{:.3f}"),
@@ -112,30 +213,40 @@ def generate_parameter_table():
         (r"$E_{v,30}$", r"MPa", "Ev30", "{:.1f}"),
     ]
 
-    # 3. Construct the LaTeX string
+    # Summary Statistics rows
+    stat_rows = [
+        (r"$R^2$", r"--", "r2", "{:.4f}"),
+        (r"RMSE", r"--", "rmse", "{:.2e}"),
+        (r"MAPE", r"\%", "mape", "{:.2f}"),
+        (r"$e_{\text{max}}$", r"--", "max_err", "{:.2e}"),
+        (r"SSE", r"--", "sse", "{:.2e}"),
+    ]
+
     latex_str = [
         r"\begin{table}[htbp]",
         r"    \centering",
-        r"    \caption{Fitted TLV model parameters for High and Standard print qualities.}",
+        r"    \caption{Fitted TLV model parameters and fit summary statistics for High and Standard print qualities.}",
         r"    \label{tab:fitted_tlv_params}",
         r"    \begin{tabular}{llcc}",
         r"        \toprule",
-        r"        \textbf{Parameter} & \textbf{Units} & \textbf{High Quality} & \textbf{Standard Quality} \\",
+        r"        \textbf{Parameter / Metric} & \textbf{Units} & \textbf{High Quality} & \textbf{Standard Quality} \\",
         r"        \midrule",
+        r"        \multicolumn{4}{l}{\textit{Model Parameters}} \\",
     ]
 
-    for symbol, units, key, fmt in rows:
-        val_high = fmt.format(high[key]) if key in high else "N/A"
-        val_std = fmt.format(std[key]) if key in std else "N/A"
+    for symbol, units, key, fmt in param_rows:
+        val_high = format_latex_val(high_attrs.get(key), fmt)
+        val_std = format_latex_val(std_attrs.get(key), fmt)
+        latex_str.append(f"        {symbol} & {units} & {val_high} & {val_std} \\\\")
 
-        # Convert Python scientific notation (e.g. 1.23e-04) to LaTeX ($1.23 \times 10^{-4}$)
-        if "e" in val_high:
-            val_high = val_high.replace("e", r" \times 10^{").replace("+0", "").replace("+", "").replace("-0", "-") + "}"
-            val_high = f"${val_high}$"
-        if "e" in val_std:
-            val_std = val_std.replace("e", r" \times 10^{").replace("+0", "").replace("+", "").replace("-0", "-") + "}"
-            val_std = f"${val_std}$"
+    latex_str.extend([
+        r"        \midrule",
+        r"        \multicolumn{4}{l}{\textit{Goodness-of-Fit Summary Statistics}} \\",
+    ])
 
+    for symbol, units, key, fmt in stat_rows:
+        val_high = format_latex_val(high_stats.get(key), fmt)
+        val_std = format_latex_val(std_stats.get(key), fmt)
         latex_str.append(f"        {symbol} & {units} & {val_high} & {val_std} \\\\")
 
     latex_str.extend([
@@ -144,12 +255,11 @@ def generate_parameter_table():
         r"\end{table}",
     ])
 
-    # 4. Save to file
     with open(OUTPUT_TEX, "w", encoding="utf-8") as f:
         f.write("\n".join(latex_str))
 
     print(f"LaTeX table successfully generated at {OUTPUT_TEX}")
-
+    
 
 def main():
     if not H5_PATH.exists():
@@ -407,7 +517,6 @@ def main():
     # 4. Generate LaTeX summary table
     print("Generating LaTeX parameter summary table...")
     generate_parameter_table()
-
 
 if __name__ == "__main__":
     main()
