@@ -1,12 +1,12 @@
 """
-Tertiary-creep trimming & print-quality partitioning (Thesis Sec. 1.3.5).
+Creep stage trimming & print-quality partitioning.
 
-Reuses eda.stage_classification.classify_stages directly -- the thesis
-explicitly states the SAME classification strategy is used here as for the
-EDA stage-onset detection, so this module must not reimplement the k1/k2
-logic independently.
+Reuses eda.stage_classification.classify_stages directly to detect stage boundaries,
+trimming secondary and tertiary creep stages as well as any strain measurements
+recorded after the final temperature reading.
 """
 from dataclasses import replace
+import numpy as np
 
 from creep_model.domain import CreepTest, CreepExperiment
 from creep_model.eda.stage_classification import classify_stages
@@ -14,28 +14,45 @@ from creep_model.eda.stage_classification import classify_stages
 
 def trim_tertiary(test: CreepTest, k1: int, k2: int) -> CreepTest:
     """
-    ...
-    Raises:
-        Nothing anymore for the "primary-only" case -- see below.
+    Trims secondary and tertiary creep data as well as any trailing data points 
+    recorded after the final temperature reading.
     """
+    cutoff_idx = len(test.time_series) - 1
+
+    # 1. Stage-based trimming: Remove secondary and tertiary creep stages
     classification = classify_stages(test, k1=k1, k2=k2)
 
-    if classification.primary_end_idx is None:
-        # No secondary-creep onset detected at all under this k1/k2 -- the
-        # test never left primary creep. Tertiary creep can only begin
-        # AFTER secondary onset, so there is nothing to trim here; include
-        # the test unchanged rather than discarding it.
-        return test
+    if classification.primary_end_idx is not None:
+        # Trim at the end of primary creep (onset of secondary creep)
+        cutoff_idx = min(cutoff_idx, classification.primary_end_idx)
+    elif classification.secondary_end_idx is not None:
+        # Fallback to secondary_end_idx if primary_end_idx was not identified
+        cutoff_idx = min(cutoff_idx, classification.secondary_end_idx)
 
-    end_idx = classification.secondary_end_idx
-    if end_idx is None:
-        return test  # test ended before tertiary creep began -- nothing to trim
+    # 2. Temperature-based trimming: Remove data past the final temperature reading
+    if (
+        hasattr(test, "temp_time_series")
+        and test.temp_time_series is not None
+        and len(test.temp_time_series) > 0
+    ):
+        max_temp_time = test.temp_time_series[-1]
+        valid_temp_indices = np.where(test.time_series <= max_temp_time)[0]
+        if len(valid_temp_indices) > 0:
+            cutoff_idx = min(cutoff_idx, valid_temp_indices[-1])
 
-    return replace(
-        test,
-        time_series=test.time_series[: end_idx + 1],
-        strain_series=test.strain_series[: end_idx + 1],
-    )
+    # Apply trimming if a smaller cutoff index was found
+    if cutoff_idx < len(test.time_series) - 1:
+        return replace(
+            test,
+            time_series=test.time_series[: cutoff_idx + 1],
+            strain_series=test.strain_series[: cutoff_idx + 1],
+        )
+
+    return test
+
+
+# Alias for semantics
+trim_test = trim_tertiary
 
 
 def trim_and_partition(
@@ -61,7 +78,9 @@ def trim_and_partition(
         groups.setdefault(trimmed.print_quality, []).append(trimmed)
 
     if skipped:
-        print(f"Warning: skipped {len(skipped)} test(s) with no detected secondary "
-              f"creep under k1={k1}, k2={k2}: {skipped}")
+        print(
+            f"Warning: skipped {len(skipped)} test(s) with error during trimming "
+            f"under k1={k1}, k2={k2}: {skipped}"
+        )
 
     return groups
