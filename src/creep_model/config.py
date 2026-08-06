@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
 
 @dataclass(frozen=True)
 class CreepConfig:
@@ -21,13 +22,40 @@ class CreepConfig:
     col_temp: str = "Temperature_degC"
 
     # Creep Stage Classification thresholds
-    K1 = 3
-    K2 = 4
+    K1: int = 3
+    K2: int = 3
 
     # DE hyperparameters for TLV fitting 
-        # Real run: = {"seed": 42, "workers": -1}
-        # Small batch test: = {"maxiter": 20, "popsize": 10, "seed": 42, "workers": -1}
-    DE_KWARGS = {"seed": 42, "workers": -1} 
+    DE_KWARGS: dict = field(default_factory=lambda: {
+        "seed": 42,
+        "workers": -1,
+        "popsize": 6,          # 6 * 10 = 60 population members
+        "maxiter": 40,         # Cap generations (DE locates basin)
+        "tol": 0.05,           # Relax tolerance (LM finishes convergence)
+        "atol": 1e-3,
+        "strategy": "best1bin", # Fast convergence strategy
+        "mutation": (0.5, 1.0),
+        "recombination": 0.7,
+        "updating": "deferred", # Updates population after each generation
+    })
+
+    # LM hyperparameters for TLV fitting
+    LM_KWARGS: dict = field(default_factory=lambda: {
+        "method": "lm",
+        "max_nfev": 5000,
+        "ftol": 1e-8,
+        "xtol": 1e-8,
+        "gtol": 1e-8,
+    })
+
+    # Newton-Raphson hyperparameters for TLV fitting
+    NR_KWARGS: dict = field(default_factory=lambda: {
+        "tol": 1e-8,
+        "max_iter": 100,
+    })
+
+    # Optimization Penalty
+    NON_CONVERGENCE_PENALTY: float = 1e12
 
 
 config = CreepConfig()

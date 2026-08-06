@@ -14,19 +14,16 @@ from creep_model.eda.stage_classification import classify_stages
 
 def trim_tertiary(test: CreepTest, k1: int, k2: int) -> CreepTest:
     """
-    Trims secondary and tertiary creep data as well as any trailing data points 
+    Trims tertiary creep data (if detected) as well as any trailing data points 
     recorded after the final temperature reading.
     """
     cutoff_idx = len(test.time_series) - 1
 
-    # 1. Stage-based trimming: Remove secondary and tertiary creep stages
+    # 1. Stage-based trimming: Remove tertiary creep ONLY if detected
     classification = classify_stages(test, k1=k1, k2=k2)
 
-    if classification.primary_end_idx is not None:
-        # Trim at the end of primary creep (onset of secondary creep)
-        cutoff_idx = min(cutoff_idx, classification.primary_end_idx)
-    elif classification.secondary_end_idx is not None:
-        # Fallback to secondary_end_idx if primary_end_idx was not identified
+    if classification.has_tertiary and classification.secondary_end_idx is not None:
+        # Trim to the end of the secondary stage (inclusive)
         cutoff_idx = min(cutoff_idx, classification.secondary_end_idx)
 
     # 2. Temperature-based trimming: Remove data past the final temperature reading
@@ -49,7 +46,6 @@ def trim_tertiary(test: CreepTest, k1: int, k2: int) -> CreepTest:
         )
 
     return test
-
 
 # Alias for semantics
 trim_test = trim_tertiary

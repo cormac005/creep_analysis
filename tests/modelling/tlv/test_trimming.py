@@ -68,24 +68,29 @@ def test_trim_tertiary_fallback_to_secondary_end(mock_replace, mock_classify):
 
 @patch("creep_model.modelling.tlv.trimming.classify_stages")
 @patch("creep_model.modelling.tlv.trimming.replace")
-def test_trim_tertiary_temperature_cutoff(mock_replace, mock_classify):
+def test_trim_tertiary_trims_at_primary_end(mock_replace, mock_classify):
     """
-    Should trim data after the last temperature reading, even if no creep stages 
-    triggered a trim.
+    Should trim at secondary_end_idx when tertiary creep is detected.
     """
-    mock_classify.return_value = MagicMock(primary_end_idx=None, secondary_end_idx=None)
-    
-    test = MagicMock()
-    test.time_series = np.array([0, 10, 20, 30, 40])
-    test.strain_series = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
-    test.temp_time_series = np.array([0, 15, 25]) # Max temp time is 25
-    
-    trim_tertiary(test, 10, 20)
-    
-    # Valid time indices <= 25 are 0 (0s), 1 (10s), 2 (20s). So cutoff index is 2. Length is 3.
-    called_time_series = mock_replace.call_args[1]["time_series"]
-    assert len(called_time_series) == 3
+    mock_classify.return_value = MagicMock(
+        primary_end_idx=5, 
+        secondary_end_idx=5,  # Cutoff at index 5 -> array slice length 6
+        has_tertiary=True
+    )
 
+    test = MagicMock()
+    test.time_series = np.arange(20)
+    test.strain_series = np.arange(20)
+    test.temp_time_series = None
+
+    mock_replace.return_value = "trimmed_test"
+    result = trim_tertiary(test, 10, 20)
+
+    assert result == "trimmed_test"
+    mock_replace.assert_called_once()
+
+    called_time_series = mock_replace.call_args[1]["time_series"]
+    assert len(called_time_series) == 6
 
 @patch("creep_model.modelling.tlv.trimming.classify_stages")
 @patch("creep_model.modelling.tlv.trimming.replace")

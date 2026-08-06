@@ -49,9 +49,7 @@ def main() -> None:
                 total_records += 1
 
                 # Use specimen name/id if available; fallback to formatted index
-                record_id = getattr(
-                    record, "name", getattr(record, "id", f"specimen_{idx + 1}")
-                )
+                record_id = record.test_id
                 rec_grp = group_h5.create_group(str(record_id))
 
                 # Iterate through dataclass fields to dynamically store datasets & metadata

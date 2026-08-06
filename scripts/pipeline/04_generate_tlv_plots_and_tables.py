@@ -1,6 +1,7 @@
 """
-Generate plot figures (strain vs. time) and LaTeX parameter summary tables from tlv_fit_results.h5.
-This script should be run AFTER 02_fit_tlv.py has been executed.
+Generate plot figures (strain vs. time) and LaTeX parameter summary tables.
+Reads trimmed creep data from processed_experimental_data.h5 and fitted 
+predictions/parameters from tlv_fit_results.h5.
 """
 from pathlib import Path
 
@@ -38,9 +39,33 @@ COLOR_FIT = "black"  # Model Fits
 GRID_COLOR = "#CCCCCC"
 
 # File Paths
-H5_PATH = Path(config.data_output_directory) / "tlv_fit_results.h5"
+PROCESSED_H5_PATH = Path(config.data_output_directory) / "processed_experimental_data.h5"
+FIT_H5_PATH = Path(config.data_output_directory) / "tlv_fit_results.h5"
 PLOTS_DIR = Path(config.general_output_directory) / "plots" / "eps_v_time"
 OUTPUT_TEX = Path(config.general_output_directory) / "tables" / "fitted_tlv_params.tex"
+
+
+def _extract_dataset(grp, possible_keys):
+    """Safely extracts a dataset array from an HDF5 group matching any key in possible_keys."""
+    if grp is None:
+        return None
+    for k in possible_keys:
+        if k in grp and isinstance(grp[k], h5py.Dataset):
+            return grp[k][:]
+    return None
+
+
+def _extract_attr(attrs, possible_keys):
+    """Safely extracts an attribute value matching any key in possible_keys."""
+    if attrs is None:
+        return None
+    for k in possible_keys:
+        if k in attrs:
+            val = attrs[k]
+            if isinstance(val, bytes):
+                return val.decode("utf-8")
+            return val
+    return None
 
 
 def apply_shared_thesis_limits(axes, all_x_data, all_y_data):
@@ -63,31 +88,38 @@ def apply_shared_thesis_limits(axes, all_x_data, all_y_data):
             ax.set_ylim(bottom=y_min, top=y_max + 0.15 * y_range)
 
 
-def _collect_test_groups(group):
+def _collect_all_test_groups(group):
     """
-    Recursively collects test groups containing measured and predicted strain data,
-    supporting both flat (/tests/<test_id>) and nested (/tests/<quality>/<test_id>) HDF5 structures.
+    Recursively collects leaf test groups containing HDF5 Datasets.
+    Returns a dictionary mapping test_id -> h5py.Group
     """
-    test_nodes = []
+    test_dict = {}
     for key, item in group.items():
         if isinstance(item, h5py.Group):
-            if "strain_predicted" in item and "strain_measured" in item:
-                test_nodes.append((key, item))
+            # Check if this group contains datasets (e.g. specimen_1 or H.10.1 node)
+            has_datasets = any(isinstance(v, h5py.Dataset) for v in item.values())
+            if has_datasets:
+                test_id = _extract_attr(item.attrs, ["test_id", "Test_ID", "id"]) or key
+                test_dict[test_id] = item
             else:
-                test_nodes.extend(_collect_test_groups(item))
-    return test_nodes
+                # Recurse into sub-groups (e.g. /High/specimen_1 or /tests/...)
+                nested = _collect_all_test_groups(item)
+                test_dict.update(nested)
+    return test_dict
 
 
 def calculate_fit_stats(y_true, y_pred):
-    """Computes R^2, RMSE, MAPE, e_max, and SSE."""
+    """Computes R^2, RMSE, MAPE, e_max, and SSE, handling possible length differences."""
     y_true = np.asarray(y_true).ravel()
     y_pred = np.asarray(y_pred).ravel()
 
-    # Guard against empty arrays
     if len(y_true) == 0 or len(y_pred) == 0:
         return {}
 
-    # Filter out NaNs to prevent math errors propagating to statistics
+    min_len = min(len(y_true), len(y_pred))
+    y_true = y_true[:min_len]
+    y_pred = y_pred[:min_len]
+
     valid = ~(np.isnan(y_true) | np.isnan(y_pred))
     if not np.any(valid):
         return {}
@@ -114,33 +146,29 @@ def calculate_fit_stats(y_true, y_pred):
 
 
 def calculate_group_stats(f: h5py.File, quality: str) -> dict:
-    """
-    Robustly traverses the HDF5 file to find all tests belonging to a specific print quality,
-    concatenates their measured and predicted strains, and computes global fit statistics.
-    """
+    """Computes summary stats directly from fit results file."""
     if "tests" not in f:
         return {}
 
-    # Reuse recursive search so it is immune to HDF5 hierarchy variations
-    test_nodes = _collect_test_groups(f["tests"])
+    test_dict = _collect_all_test_groups(f["tests"])
     
     all_y_true = []
     all_y_pred = []
 
-    # Gather data from every test matching this print quality attribute
-    for test_id, test_grp in test_nodes:
-        q = test_grp.attrs.get("print_quality")
-        if isinstance(q, bytes):
-            q = q.decode("utf-8")
+    for test_id, test_grp in test_dict.items():
+        q = _extract_attr(test_grp.attrs, ["print_quality", "quality", "PrintQuality"])
             
         if q == quality:
-            all_y_true.append(test_grp["strain_measured"][:])
-            all_y_pred.append(test_grp["strain_predicted"][:])
+            p_strain = _extract_dataset(test_grp, ["strain_predicted", "strain_pred"])
+            m_strain = _extract_dataset(test_grp, ["strain_measured", "strain_series", "strain", "eps"])
+            if p_strain is not None and m_strain is not None:
+                min_len = min(len(m_strain), len(p_strain))
+                all_y_true.append(m_strain[:min_len])
+                all_y_pred.append(p_strain[:min_len])
 
     if not all_y_true:
         return {}
 
-    # Concatenate all tests to calculate global summary metrics for the model
     y_true_concat = np.concatenate(all_y_true)
     y_pred_concat = np.concatenate(all_y_pred)
 
@@ -152,7 +180,6 @@ def format_latex_val(val, fmt):
     if val is None or val == "N/A":
         return "N/A"
     
-    # Securely trap NaNs (accounting for numpy floats vs python floats)
     if isinstance(val, (float, np.floating)) and np.isnan(val):
         return "N/A"
 
@@ -175,17 +202,17 @@ def format_latex_val(val, fmt):
 
 
 def generate_parameter_table():
-    """Reads fitted TLV parameters & calculates/reads summary stats to format a LaTeX table."""
-    if not H5_PATH.exists():
-        raise FileNotFoundError(f"Cannot generate table: {H5_PATH} does not exist.")
+    """Reads fitted TLV parameters & calculates summary stats to format a LaTeX table."""
+    if not FIT_H5_PATH.exists():
+        print(f"Warning: Cannot generate table because {FIT_H5_PATH} does not exist yet.")
+        return
 
     OUTPUT_TEX.parent.mkdir(parents=True, exist_ok=True)
 
     high_attrs, std_attrs = {}, {}
     high_stats, std_stats = {}, {}
 
-    with h5py.File(H5_PATH, "r") as f:
-        # 1. Read fitted parameters (Attributes)
+    with h5py.File(FIT_H5_PATH, "r") as f:
         if "fitted_parameters" in f:
             fit_grp = f["fitted_parameters"]
             if "High" in fit_grp:
@@ -195,11 +222,9 @@ def generate_parameter_table():
         else:
             print("Warning: 'fitted_parameters' group not found in HDF5 file.")
 
-        # 2. Calculate summary statistics dynamically directly from test Datasets
         high_stats = calculate_group_stats(f, "High")
         std_stats = calculate_group_stats(f, "Standard")
 
-    # Model parameters rows
     param_rows = [
         (r"$A_{20}$", r"$\text{MPa}^{-n}\cdot\text{s}^{-(m+1)}$", "A20", "{:.2e}"),
         (r"$A_{30}$", r"$\text{MPa}^{-n}\cdot\text{s}^{-(m+1)}$", "A30", "{:.2e}"),
@@ -213,7 +238,6 @@ def generate_parameter_table():
         (r"$E_{v,30}$", r"MPa", "Ev30", "{:.1f}"),
     ]
 
-    # Summary Statistics rows
     stat_rows = [
         (r"$R^2$", r"--", "r2", "{:.4f}"),
         (r"RMSE", r"--", "rmse", "{:.2e}"),
@@ -259,65 +283,112 @@ def generate_parameter_table():
         f.write("\n".join(latex_str))
 
     print(f"LaTeX table successfully generated at {OUTPUT_TEX}")
-    
+
 
 def main():
-    if not H5_PATH.exists():
+    if not PROCESSED_H5_PATH.exists():
         raise FileNotFoundError(
-            f"Input file {H5_PATH} does not exist. Please run 02_fit_tlv.py first."
+            f"Input processed experimental data file {PROCESSED_H5_PATH} does not exist. Please run 01_classify_and_trim.py first."
         )
 
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     grouped_tests = {}
 
-    print(f"Reading processed data and temperatures directly from {H5_PATH}...")
-    with h5py.File(H5_PATH, "r") as f:
-        if "tests" not in f:
-            raise KeyError(f"'tests' group not found in {H5_PATH}")
+    print(f"Reading trimmed experimental data from {PROCESSED_H5_PATH}...")
 
-        test_items = _collect_test_groups(f["tests"])
+    # Keep both file handles open simultaneously while pulling data into memory
+    with h5py.File(PROCESSED_H5_PATH, "r") as f_proc:
+        f_fit = h5py.File(FIT_H5_PATH, "r") if FIT_H5_PATH.exists() else None
+        
+        try:
+            # Collect test nodes (e.g., High/specimen_1, Standard/specimen_1, etc.)
+            proc_tests = _collect_all_test_groups(f_proc)
 
-        for test_id, test_group in test_items:
-            attrs = test_group.attrs
+            fit_tests = {}
+            if f_fit is not None:
+                fit_root = f_fit["tests"] if "tests" in f_fit else f_fit
+                fit_tests = _collect_all_test_groups(fit_root)
 
-            print_quality = attrs.get("print_quality")
-            if isinstance(print_quality, bytes):
-                print_quality = print_quality.decode("utf-8")
+            for test_id, proc_grp in proc_tests.items():
+                attrs = dict(proc_grp.attrs)
+                fit_grp = fit_tests.get(test_id)
+                if fit_grp is not None:
+                    attrs.update(dict(fit_grp.attrs))
 
-            raw_stress = attrs.get("applied_stress_MPa")
-            if print_quality is None or raw_stress is None:
-                continue
+                print_quality = _extract_attr(attrs, ["print_quality", "quality", "PrintQuality"])
+                raw_stress = _extract_attr(attrs, ["applied_stress_MPa", "actual_stress", "nominal_stress", "stress_MPa", "stress"])
 
-            actual_stress = float(raw_stress)
-            nominal_stress = float(round(actual_stress, -1))
+                if print_quality is None or raw_stress is None:
+                    continue
 
-            key = (print_quality, nominal_stress)
-            if key not in grouped_tests:
-                grouped_tests[key] = []
+                actual_stress = float(raw_stress)
+                nominal_stress = float(round(actual_stress, -1))
 
-            time_s = test_group["time_s"][:]
-            strain_measured = test_group["strain_measured"][:]
-            strain_predicted = test_group["strain_predicted"][:]
+                key = (print_quality, nominal_stress)
+                if key not in grouped_tests:
+                    grouped_tests[key] = []
 
-            if "temperature_interpolated" in test_group:
-                temp_array = test_group["temperature_interpolated"][:]
-            else:
-                temp_array = None
+                # Extract time and strain series from processed_experimental_data.h5
+                time_s = _extract_dataset(proc_grp, ["time_series", "time_s", "time", "t"])
+                strain_measured = _extract_dataset(proc_grp, ["strain_series", "strain_measured", "strain", "eps_measured", "eps"])
+                
+                # Temperature arrays and time series
+                temp_array = _extract_dataset(proc_grp, ["temperature_readings", "temperature_interpolated", "temperature", "temp", "T"])
+                temp_time_s = _extract_dataset(proc_grp, ["temp_time_series", "temp_time_s"])
 
-            mean_t = attrs.get("mean_temp_c_secondary_creep", None)
-            if (mean_t is None or np.isnan(mean_t)) and temp_array is not None:
-                mean_t = np.nanmean(temp_array)
+                # Override with continuous interpolated temperature profile from fit file if available
+                if fit_grp is not None:
+                    interp_temp = _extract_dataset(fit_grp, ["temperature_interpolated"])
+                    if interp_temp is not None:
+                        temp_array = interp_temp
+                        temp_time_s = time_s  # Interpolated onto fine time_s array
 
-            grouped_tests[key].append({
-                "test_id": test_id,
-                "time_s": time_s,
-                "strain_measured": strain_measured,
-                "strain_predicted": strain_predicted,
-                "mean_temp": mean_t,
-                "temp_array": temp_array,
-                "actual_stress": actual_stress,
-                "nominal_stress": nominal_stress,
-            })
+                if temp_time_s is None:
+                    temp_time_s = time_s
+
+                if time_s is None or strain_measured is None:
+                    continue
+
+                strain_predicted = None
+                time_s_pred = None
+
+                if fit_grp is not None:
+                    strain_predicted = _extract_dataset(fit_grp, ["strain_predicted", "strain_pred", "predicted_strain"])
+                    time_s_pred = _extract_dataset(fit_grp, ["time_s", "time_series", "time", "t"])
+
+                if strain_predicted is not None:
+                    if time_s_pred is None:
+                        time_s_pred = time_s[:len(strain_predicted)]
+                    elif len(time_s_pred) != len(strain_predicted):
+                        min_len = min(len(time_s_pred), len(strain_predicted))
+                        time_s_pred = time_s_pred[:min_len]
+                        strain_predicted = strain_predicted[:min_len]
+
+                mean_t = _extract_attr(attrs, ["mean_temp_c_secondary_creep", "mean_temp", "temperature", "initial_temp_c"])
+                if mean_t is not None:
+                    try:
+                        mean_t = float(mean_t)
+                    except (ValueError, TypeError):
+                        mean_t = None
+
+                if (mean_t is None or np.isnan(mean_t)) and temp_array is not None:
+                    mean_t = float(np.nanmean(temp_array))
+
+                grouped_tests[key].append({
+                    "test_id": test_id,
+                    "time_s": time_s,
+                    "strain_measured": strain_measured,
+                    "time_s_pred": time_s_pred,
+                    "strain_predicted": strain_predicted,
+                    "mean_temp": mean_t,
+                    "temp_array": temp_array,
+                    "temp_time_s": temp_time_s,
+                    "actual_stress": actual_stress,
+                    "nominal_stress": nominal_stress,
+                })
+        finally:
+            if f_fit is not None:
+                f_fit.close()
 
     row_order = ["Standard", "High"]
     col_order = [10.0, 20.0, 30.0]
@@ -331,15 +402,10 @@ def main():
     for print_quality in row_order:
         fig, axes = plt.subplots(1, 3, figsize=FIG_SIZE_1X3, sharex=True, sharey=True)
         all_x, all_y = [], []
-        legend_handles = []
-
-        # Generic style handles for data types
-        legend_handles.append(
-            Line2D([0], [0], marker="o", color="w", markerfacecolor="gray", markersize=5, label="Measured Data")
-        )
-        legend_handles.append(
-            Line2D([0], [0], color="gray", linestyle="--", linewidth=1.8, label="TLV Fit")
-        )
+        legend_handles = [
+            Line2D([0], [0], marker="o", color="w", markerfacecolor="gray", markersize=5, label="Measured Data"),
+            Line2D([0], [0], color="gray", linestyle="--", linewidth=1.8, label="TLV Fit"),
+        ]
 
         for col_idx, stress in enumerate(col_order):
             ax = axes[col_idx]
@@ -349,7 +415,6 @@ def main():
             ax.grid(True, color=GRID_COLOR, linestyle="--", alpha=0.4)
             ax.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
 
-            # Subpanel Header Annotation
             ax.text(
                 0.04, 0.90, f"{int(stress)} MPa Nominal", transform=ax.transAxes,
                 fontsize=FONT_SIZE_ANNOT, fontweight="bold",
@@ -363,15 +428,16 @@ def main():
                 actual_sigma_str = f"{test['actual_stress']:.2f} MPa"
 
                 ax.scatter(test["time_s"], test["strain_measured"], alpha=0.6, s=10, color=c, marker="o")
-                ax.plot(test["time_s"], test["strain_predicted"], linewidth=1.8, linestyle="--", color=c, alpha=0.8)
+                all_x.extend(test["time_s"])
+                all_y.extend(test["strain_measured"])
+
+                if test["strain_predicted"] is not None and test["time_s_pred"] is not None:
+                    ax.plot(test["time_s_pred"], test["strain_predicted"], linewidth=1.8, linestyle="--", color=c, alpha=0.8)
+                    all_y.extend(test["strain_predicted"])
 
                 legend_handles.append(
                     mpatches.Patch(color=c, label=f"{int(stress)} MPa Rep {rep_num} ({actual_sigma_str}, {t_str})")
                 )
-
-                all_x.extend(test["time_s"])
-                all_y.extend(test["strain_measured"])
-                all_y.extend(test["strain_predicted"])
 
             ax.set_xlabel("Time (s)", fontsize=FONT_SIZE_LABEL)
 
@@ -418,11 +484,12 @@ def main():
             for i, test in enumerate(tests):
                 c = palette_colors[i % len(palette_colors)]
                 ax.scatter(test["time_s"], test["strain_measured"], alpha=0.6, s=10, color=c, marker="o")
-                ax.plot(test["time_s"], test["strain_predicted"], linewidth=1.8, linestyle="--", color=c, alpha=0.8)
-
                 all_x_grid.extend(test["time_s"])
                 all_y_grid.extend(test["strain_measured"])
-                all_y_grid.extend(test["strain_predicted"])
+
+                if test["strain_predicted"] is not None and test["time_s_pred"] is not None:
+                    ax.plot(test["time_s_pred"], test["strain_predicted"], linewidth=1.8, linestyle="--", color=c, alpha=0.8)
+                    all_y_grid.extend(test["strain_predicted"])
 
             if row_idx == 1:
                 ax.set_xlabel("Time (s)", fontsize=FONT_SIZE_LABEL)
@@ -464,26 +531,30 @@ def main():
                 test["time_s"], test["strain_measured"],
                 color=COLOR_PRIMARY, alpha=0.6, s=10, marker="o", label="Measured Strain",
             )
-            ax1.plot(
-                test["time_s"], test["strain_predicted"],
-                color=COLOR_FIT, linewidth=1.8, linestyle="--", alpha=0.8,
-                label=f"TLV Prediction ({stress_str}, Avg T: {avg_temp_str})",
-            )
+
+            if test["strain_predicted"] is not None and test["time_s_pred"] is not None:
+                ax1.plot(
+                    test["time_s_pred"], test["strain_predicted"],
+                    color=COLOR_FIT, linewidth=1.8, linestyle="--", alpha=0.8,
+                    label=f"TLV Prediction ({stress_str}, Avg T: {avg_temp_str})",
+                )
 
             ax1.tick_params(axis="x", labelsize=FONT_SIZE_TICK)
             ax1.tick_params(axis="y", labelcolor=COLOR_PRIMARY, labelsize=FONT_SIZE_TICK)
             ax1.grid(True, color=GRID_COLOR, linestyle="--", alpha=0.4)
 
-            all_y1 = np.concatenate([test["strain_measured"], test["strain_predicted"]])
-            apply_shared_thesis_limits([ax1], test["time_s"], all_y1)
+            y1_combined = list(test["strain_measured"])
+            if test["strain_predicted"] is not None:
+                y1_combined.extend(test["strain_predicted"])
+            apply_shared_thesis_limits([ax1], test["time_s"], np.asarray(y1_combined))
 
             ax2 = None
-            if test["temp_array"] is not None:
+            if test["temp_array"] is not None and test["temp_time_s"] is not None:
                 ax2 = ax1.twinx()
                 ax2.set_ylabel("Temperature (°C)", color=COLOR_SECONDARY, fontsize=FONT_SIZE_LABEL, fontweight="bold")
                 ax2.plot(
-                    test["time_s"], test["temp_array"],
-                    color=COLOR_SECONDARY, linewidth=1.2, alpha=0.7, label="Interpolated Temp.",
+                    test["temp_time_s"], test["temp_array"],
+                    color=COLOR_SECONDARY, linewidth=1.2, alpha=0.7, label="Temperature (°C)",
                 )
                 ax2.tick_params(axis="y", labelcolor=COLOR_SECONDARY, labelsize=FONT_SIZE_TICK)
 
@@ -514,9 +585,10 @@ def main():
 
     print(f"All updated non-overlapping plots saved to: {PLOTS_DIR.absolute()}")
 
-    # 4. Generate LaTeX summary table
+    # Generate LaTeX summary table
     print("Generating LaTeX parameter summary table...")
     generate_parameter_table()
+
 
 if __name__ == "__main__":
     main()

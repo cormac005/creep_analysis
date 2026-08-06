@@ -5,20 +5,32 @@ import numpy as np
 import numpy.typing as npt
 from scipy.optimize import differential_evolution, least_squares
 
+from creep_model.config import config
 from creep_model.domain import CreepTest
 from creep_model.modelling.tlv.parameters import TLVParameters
-from creep_model.modelling.tlv.solver import solve_tlv, SolverConvergenceError
+from creep_model.modelling.tlv.solver import (
+    PreparedTest, prepare_test_data, solve_tlv, solve_tlv_prepared, SolverConvergenceError
+)
 from creep_model.modelling.optimisation.bounds import TLVBounds
 from creep_model.modelling.optimisation.scaling import compute_scale_factors, scale, unscale
 
-# Penalty returned to DE when a candidate parameter set fails to converge --
-# large enough to be reliably rejected by the population-based search
-# without being inf/nan (which some scipy internals handle poorly).
-_NON_CONVERGENCE_PENALTY = 1e12
+_NON_CONVERGENCE_PENALTY = config.NON_CONVERGENCE_PENALTY
+
+
+def _group_mse_prepared(params: TLVParameters, prep_tests: list[tuple[PreparedTest, npt.NDArray[np.float64]]]) -> float:
+    """Eq. 1.12, evaluated using pre-calculated PreparedTest array profiles."""
+    losses = []
+    for prep, strain_series in prep_tests:
+        y_pred = solve_tlv_prepared(prep, params)
+        losses.append(np.mean((y_pred - strain_series) ** 2))
+    return float(np.mean(losses))
 
 
 def _group_mse(params: TLVParameters, tests: list[CreepTest]) -> float:
-    """Eq. 1.12, aggregated (mean) across every test in the group."""
+    """
+    Eq. 1.12, aggregated (mean) across every test in the group.
+    Maintained for API backwards compatibility with unit tests.
+    """
     losses = []
     for test in tests:
         y_pred = solve_tlv(test, params)
@@ -26,9 +38,15 @@ def _group_mse(params: TLVParameters, tests: list[CreepTest]) -> float:
     return float(np.mean(losses))
 
 
-def _de_objective(x_normalized: npt.NDArray[np.float64], tests: list[CreepTest], bounds: TLVBounds) -> float:
+def _de_objective(
+    x_normalized: npt.NDArray[np.float64],
+    tests: list,
+    bounds: TLVBounds
+) -> float:
     params = bounds.denormalize(x_normalized)
     try:
+        if tests and isinstance(tests[0], tuple):
+            return _group_mse_prepared(params, tests)
         return _group_mse(params, tests)
     except SolverConvergenceError:
         return _NON_CONVERGENCE_PENALTY
@@ -36,38 +54,31 @@ def _de_objective(x_normalized: npt.NDArray[np.float64], tests: list[CreepTest],
 
 def _lm_residuals(
     x_scaled: npt.NDArray[np.float64],
-    tests: list[CreepTest],
+    tests: list,
     scale_factors: npt.NDArray[np.float64],
 ) -> npt.NDArray[np.float64]:
-    """
-    ...
-    NOTE: earlier versions let SolverConvergenceError propagate uncaught
-    here on the assumption DE's best candidate would always sit in a
-    well-converging region. In practice, LM's finite-difference Jacobian
-    evaluates points just outside x0 by construction, and can briefly
-    probe just outside the stable region -- especially if DE itself
-    didn't fully converge (see fit_group's "DE did not report success"
-    warning). A single such point shouldn't crash the whole pipeline, so
-    it's now penalised with a large-but-finite residual instead, with a
-    printed warning. If this warning fires repeatedly for the same test
-    across many LM iterations, that IS still a signal worth investigating
-    (see original note) -- it's just no longer fatal on its own.
-    """
     x_physical = unscale(x_scaled, scale_factors)
     params = TLVParameters.from_array(x_physical)
 
     all_residuals = []
-    for test in tests:
+    for item in tests:
+        if isinstance(item, tuple):
+            prep, strain_series = item
+            test_id = getattr(prep, "test_id", "test")
+            y_pred_func = lambda: solve_tlv_prepared(prep, params)
+        else:
+            strain_series = item.strain_series
+            test_id = item.test_id
+            y_pred_func = lambda: solve_tlv(item, params)
+
         try:
-            y_pred = solve_tlv(test, params)
+            y_pred = y_pred_func()
         except SolverConvergenceError as e:
-            print(f"Warning: solver did not converge during LM refinement "
-                  f"for test {test.test_id} at a probed point ({e}); "
-                  "penalising rather than crashing.")
-            all_residuals.append(np.full_like(test.strain_series, 1e3))
+            all_residuals.append(np.full_like(strain_series, 1e3))
             continue
-        all_residuals.append(y_pred - test.strain_series)
+        all_residuals.append(y_pred - strain_series)
     return np.concatenate(all_residuals)
+
 
 def fit_group(
     tests: list[CreepTest],
@@ -78,40 +89,23 @@ def fit_group(
     """
     Fit TLVParameters to a single print-quality group via DE (global search)
     followed by LM (local refinement) -- Sec. 1.3.2.
-
-    Args:
-        tests: TRIMMED CreepTest objects (tertiary creep already removed via
-               modeling.trimming.trim_tertiary), all of the same
-               print_quality.
-        bounds: TLVBounds for this group -- build via
-                TLVBounds.from_group_data(tests) so Ee/Ev upper bounds
-                reflect this group's actual data (Table 1.1).
-        de_kwargs: passed through to scipy.optimize.differential_evolution,
-                   e.g. {"workers": -1, "maxiter": 200, "seed": 42, "popsize": 20}.
-                   `workers=-1` parallelises across population members --
-                   worth using given each evaluation calls the sequential
-                   Newton-Raphson solver across every test in the group.
-        lm_kwargs: passed through to scipy.optimize.least_squares,
-                   e.g. {"max_nfev": 5000}.
-
-    Returns:
-        Fitted TLVParameters for this group.
     """
-    de_kwargs = dict(de_kwargs or {})
-    lm_kwargs = dict(lm_kwargs or {})
+    merged_de_kwargs = {**config.DE_KWARGS, **(de_kwargs or {})}
+    merged_lm_kwargs = {**config.LM_KWARGS, **(lm_kwargs or {})}
+
+    prep_tests = [(prepare_test_data(t), t.strain_series.astype(np.float64)) for t in tests]
 
     # --- Stage 1: Differential Evolution over normalised [0,1]^10 space ---
     de_result = differential_evolution(
         func=_de_objective,
         bounds=bounds.as_unit_bounds(),
-        args=(tests, bounds),
-        **de_kwargs,
+        args=(prep_tests, bounds),
+        **merged_de_kwargs,
     )
     if not de_result.success:
         print(f"Warning: DE did not report success: {de_result.message}")
     if de_result.fun >= _NON_CONVERGENCE_PENALTY:
-        print("Warning: DE's best candidate never converged in the solver -- "
-              "check bounds (Table 1.1) or tol before trusting this fit.")
+        print("Warning: DE's best candidate never converged in the solver -- check bounds or tol.")
 
     params_physical = bounds.denormalize(de_result.x)
 
@@ -120,16 +114,19 @@ def fit_group(
     scale_factors = compute_scale_factors(x_physical)
     x_scaled_0 = scale(x_physical, scale_factors)
 
-    lm_method = lm_kwargs.pop("method", "lm")
+    lm_method = merged_lm_kwargs.pop("method", "lm")
+    lm_bounds = (0.0, np.inf) if lm_method == "trf" else (-np.inf, np.inf)
+
     lm_result = least_squares(
         fun=_lm_residuals,
         x0=x_scaled_0,
-        args=(tests, scale_factors),
+        args=(prep_tests, scale_factors),
+        bounds=lm_bounds,
         method=lm_method,
-        **lm_kwargs,
+        **merged_lm_kwargs,
     )
     if not lm_result.success:
-        print(f"Warning: LM did not report success: {lm_result.message}")
+        print(f"Warning: Local refinement solver did not report success: {lm_result.message}")
 
     x_final_physical = unscale(lm_result.x, scale_factors)
     return TLVParameters.from_array(x_final_physical)
