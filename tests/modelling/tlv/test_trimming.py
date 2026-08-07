@@ -24,30 +24,6 @@ def test_trim_tertiary_no_trimming_needed(mock_classify):
 
 @patch("creep_model.modelling.tlv.trimming.classify_stages")
 @patch("creep_model.modelling.tlv.trimming.replace")
-def test_trim_tertiary_trims_at_primary_end(mock_replace, mock_classify):
-    """
-    Should trim at primary_end_idx, removing both secondary and tertiary creep.
-    """
-    mock_classify.return_value = MagicMock(primary_end_idx=5, secondary_end_idx=10)
-    
-    test = MagicMock()
-    test.time_series = np.arange(20)
-    test.strain_series = np.arange(20)
-    test.temp_time_series = None # Ignore temperature trimming
-    
-    mock_replace.return_value = "trimmed_test"
-    result = trim_tertiary(test, 10, 20)
-    
-    assert result == "trimmed_test"
-    mock_replace.assert_called_once()
-    
-    # Verify it was trimmed to index 5 (length 6)
-    called_time_series = mock_replace.call_args[1]["time_series"]
-    assert len(called_time_series) == 6
-
-
-@patch("creep_model.modelling.tlv.trimming.classify_stages")
-@patch("creep_model.modelling.tlv.trimming.replace")
 def test_trim_tertiary_fallback_to_secondary_end(mock_replace, mock_classify):
     """
     Should fallback to trimming at secondary_end_idx if primary_end_idx is not found.

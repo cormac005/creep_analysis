@@ -25,18 +25,18 @@ class CreepConfig:
     K1: int = 3
     K2: int = 3
 
-    # DE hyperparameters for TLV fitting 
+# DE hyperparameters for TLV fitting
     DE_KWARGS: dict = field(default_factory=lambda: {
         "seed": 42,
-        "workers": -1,
-        "popsize": 6,          # 6 * 10 = 60 population members
-        "maxiter": 40,         # Cap generations (DE locates basin)
-        "tol": 0.05,           # Relax tolerance (LM finishes convergence)
+        "workers": 1,            # <-- Changed to 1: Disables multiprocessing entirely
+        "popsize": 6,            # 6 * 10 = 60 population members
+        "maxiter": 40,           # Cap generations (DE locates basin)
+        "tol": 0.05,             # Relax tolerance (LM finishes convergence)
         "atol": 1e-3,
-        "strategy": "best1bin", # Fast convergence strategy
+        "strategy": "best1bin",  # Fast convergence strategy
         "mutation": (0.5, 1.0),
         "recombination": 0.7,
-        "updating": "deferred", # Updates population after each generation
+        "updating": "immediate", # <-- Changed to immediate: Faster convergence on a single core
     })
 
     # LM hyperparameters for TLV fitting

@@ -9,6 +9,7 @@ Outputs generated:
         - temperature_profiles.png: Raw vs interpolated thermal history during testing
         - eda_summary_2x2.png: Consolidated 2x2 grid comparing key EDA parameters
         - eda_pairwise_relationships.png: Pairwise relationship grid via eda_plots module
+        - stage_boundaries/creep_stages_<test_id>.png: Individual test stage boundary plots
     2. Tables (saved to <general_output_directory>/tables/):
         - eda_summary_table.tex: LaTeX table with explicit Mean/Std. Dev. rows
 """
@@ -23,7 +24,11 @@ import numpy as np
 import pandas as pd
 
 from creep_model.config import config
-from creep_model.viz.eda_plots import EDAStyleConfig, plot_pairwise_relationships
+from creep_model.viz.eda_plots import (
+    EDAStyleConfig,
+    plot_pairwise_relationships,
+    plot_creep_stage_boundaries,
+)
 
 # --- CONFIGURATION & TYPOGRAPHY STANDARDS ---
 SHOW_TITLE = False
@@ -40,20 +45,111 @@ FONT_SIZE_TITLE = 11
 FONT_SIZE_ANNOT = 9
 
 # Color Palette & Styles
-COLOR_HIGH = "#1f77b4"  # High Quality
-COLOR_STD = "#ff7f0e"  # Standard Quality
-COLOR_TEMP = "#d62728"  # Temperature Data
+COLOR_HIGH = "#1f77b4"  
+COLOR_STD = "#ff7f0e"  
+COLOR_TEMP = "#d62728"  
 GRID_COLOR = "#CCCCCC"
 
+# Paths
+DATA_EXCEL_PATH = Path(config.data_directory) / "CreepData.xlsx"
 EDA_H5_PATH = Path(config.data_output_directory) / "eda_results.h5"
+PROCESSED_H5_PATH = Path(config.data_output_directory) / "processed_experimental_data.h5"
 PLOTS_DIR = Path(config.general_output_directory) / "plots" / "eda"
 TABLES_DIR = Path(config.general_output_directory) / "tables"
+
+# Stage Classification Thresholds
+K1 = config.K1
+K2 = config.K2
+
+
+def _collect_all_test_groups(group):
+    """Recursively collects test groups containing HDF5 Datasets."""
+    test_dict = {}
+    for key, item in group.items():
+        if isinstance(item, h5py.Group):
+            has_datasets = any(isinstance(v, h5py.Dataset) for v in item.values())
+            if has_datasets:
+                test_id = item.attrs.get("test_id", key)
+                if isinstance(test_id, bytes):
+                    test_id = test_id.decode("utf-8")
+                test_dict[test_id] = item
+            else:
+                nested = _collect_all_test_groups(item)
+                test_dict.update(nested)
+    return test_dict
+
+
+def _load_untrimmed_raw_tests() -> dict:
+    """
+    Loads raw untrimmed CreepTest objects directly from the raw Excel dataset via ExcelCreepParser.
+    Falls back to processed_experimental_data.h5 if the Excel file is unavailable.
+    """
+    if DATA_EXCEL_PATH.exists():
+        try:
+            from creep_model.io.parser import ExcelCreepParser
+
+            parser = ExcelCreepParser(DATA_EXCEL_PATH)
+            experiment = parser.load_experiment()
+
+            # Safely extract tests whether it's a dict or list
+            if hasattr(experiment, "tests"):
+                tests_attr = experiment.tests
+            elif hasattr(experiment, "get_all_tests"):
+                tests_attr = experiment.get_all_tests()
+            else:
+                tests_attr = []
+
+            # If tests_attr is a dictionary, extract the values (the actual CreepTest objects)
+            if isinstance(tests_attr, dict):
+                tests_list = list(tests_attr.values())
+            else:
+                tests_list = list(tests_attr)
+
+            raw_dict = {}
+            for t in tests_list:
+                tid = getattr(t, "test_id", getattr(t, "id", None))
+                if tid is not None:
+                    raw_dict[str(tid)] = t
+
+            if raw_dict:
+                return raw_dict
+        except Exception as e:
+            print(f"Notice: Could not parse raw Excel data directly ({e}). Falling back to processed HDF5.")
+
+    # Fallback to processed_experimental_data.h5 if Excel file cannot be loaded
+    if PROCESSED_H5_PATH.exists():
+        from creep_model.domain import CreepTest
+        test_dict = {}
+        with h5py.File(PROCESSED_H5_PATH, "r") as f_proc:
+            proc_tests = _collect_all_test_groups(f_proc)
+            for tid, p_grp in proc_tests.items():
+                time_series = p_grp["time_series"][:]
+                strain_series = p_grp["strain_series"][:]
+                temp_time = p_grp["temp_time_series"][:] if "temp_time_series" in p_grp else time_series
+                temp_readings = p_grp["temperature_readings"][:] if "temperature_readings" in p_grp else np.full_like(time_series, 20.0)
+                stress = float(p_grp.attrs.get("applied_stress_MPa", p_grp.attrs.get("Applied_Stress_MPa", 0.0)))
+                age = int(p_grp.attrs.get("age_days", p_grp.attrs.get("Age_Days", 0)))
+                quality = str(p_grp.attrs.get("print_quality", p_grp.attrs.get("Print_Quality", "High")))
+
+                test_dict[tid] = CreepTest(
+                    test_id=tid,
+                    time_series=time_series,
+                    strain_series=strain_series,
+                    temp_time_series=temp_time,
+                    temperature_readings=temp_readings,
+                    applied_stress_MPa=stress,
+                    age_days=age,
+                    print_quality=quality,
+                )
+        return test_dict
+
+    return {}
 
 
 def load_eda_data() -> tuple[pd.DataFrame, dict]:
     """
     Loads consolidated EDA summary table and test-level temperature profiles
-    from eda_results.h5 and computes overall mean test temperatures.
+    from eda_results.h5, computes overall mean test temperatures, and resolves Has_Tertiary flags.
     """
     if not EDA_H5_PATH.exists():
         raise FileNotFoundError(
@@ -61,6 +157,8 @@ def load_eda_data() -> tuple[pd.DataFrame, dict]:
             "Please run 03_compute_eda_stats.py first."
         )
 
+    temp_profiles = {}
+    
     with h5py.File(EDA_H5_PATH, "r") as f:
         if "eda_summary" not in f:
             raise KeyError(f"'eda_summary' group missing in {EDA_H5_PATH}")
@@ -76,11 +174,17 @@ def load_eda_data() -> tuple[pd.DataFrame, dict]:
         df = pd.DataFrame(data)
         df["Nominal_Stress_MPa"] = df["Applied_Stress_MPa"].round(-1)
 
-        temp_profiles = {}
+        tertiary_map = {}
         if "tests" in f:
             tests_grp = f["tests"]
             for test_id in tests_grp.keys():
                 t_grp = tests_grp[test_id]
+                
+                # Capture tertiary flag if stored on test attribute
+                has_tert = t_grp.attrs.get("has_tertiary", t_grp.attrs.get("Has_Tertiary", None))
+                if has_tert is not None:
+                    tertiary_map[test_id] = bool(has_tert)
+
                 entry = {}
                 if "temp_time_s" in t_grp and "temperature_raw" in t_grp:
                     entry["temp_time_s"] = t_grp["temp_time_s"][:]
@@ -90,6 +194,37 @@ def load_eda_data() -> tuple[pd.DataFrame, dict]:
                     entry["temperature_interpolated"] = t_grp["temperature_interpolated"][:]
                 if entry:
                     temp_profiles[test_id] = entry
+
+        # Fallback: dynamically re-classify stage boundaries from untrimmed time series if Has_Tertiary is missing
+        if "Has_Tertiary" not in df.columns and "has_tertiary" not in df.columns:
+            if len(tertiary_map) < len(df):
+                try:
+                    from creep_model.eda.stage_classification import classify_stages
+
+                    raw_tests = _load_untrimmed_raw_tests()
+                    for tid, ctest in raw_tests.items():
+                        if tid not in tertiary_map:
+                            cls = classify_stages(ctest, k1=K1, k2=K2)
+                            has_tert = getattr(
+                                cls,
+                                "has_tertiary",
+                                (
+                                    cls.primary_end_idx is not None
+                                    and cls.secondary_end_idx is not None
+                                    and len(cls.plateaus) >= 2
+                                    and cls.secondary_end_idx < cls.plateaus[-2].end_idx
+                                ),
+                            )
+                            tertiary_map[tid] = bool(has_tert)
+                except Exception as e:
+                    print(f"Notice: Fallback tertiary stage resolution skipped: {e}")
+
+            has_tertiary_list = [tertiary_map.get(tid, False) for tid in df["Test_ID"]]
+            df["Has_Tertiary"] = has_tertiary_list
+        elif "has_tertiary" in df.columns and "Has_Tertiary" not in df.columns:
+            df["Has_Tertiary"] = df["has_tertiary"].astype(bool)
+        else:
+            df["Has_Tertiary"] = df["Has_Tertiary"].astype(bool)
 
         overall_mean_temps = []
         for _, row in df.iterrows():
@@ -157,13 +292,13 @@ def plot_creep_rate_vs_stress(df: pd.DataFrame, output_dir: Path) -> None:
     handles, labels = ax.get_legend_handles_labels()
     if handles:
         ax.legend(loc="upper left", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
+
     ax.set_ylabel(
         r"Secondary Creep Rate $\dot{\varepsilon}_{ss}$ ($\text{s}^{-1}$)",
         fontsize=FONT_SIZE_LABEL,
         fontweight="bold",
     )
     ax.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
-    ax.legend(loc="upper left", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
 
     if SHOW_TITLE:
         ax.set_title("Secondary Creep Rate vs. Applied Stress", fontsize=FONT_SIZE_TITLE)
@@ -215,7 +350,10 @@ def plot_initial_strain_vs_stress(df: pd.DataFrame, output_dir: Path) -> None:
         fontweight="bold",
     )
     ax.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
-    ax.legend(loc="upper left", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
+    
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(loc="upper left", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
 
     y_max = df["Eps_Tilde_0"].max() if ("Eps_Tilde_0" in df.columns and not df["Eps_Tilde_0"].empty) else 0.0
     top_limit = y_max * 1.15 if (y_max is not None and y_max > 0) else 1.0
@@ -265,7 +403,10 @@ def plot_temperature_profiles(temp_profiles: dict, output_dir: Path) -> None:
     ax.set_xlabel("Time (s)", fontsize=FONT_SIZE_LABEL, fontweight="bold")
     ax.set_ylabel("Temperature (°C)", fontsize=FONT_SIZE_LABEL, fontweight="bold")
     ax.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
-    ax.legend(loc="best", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
+
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(loc="best", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
 
     if SHOW_TITLE:
         ax.set_title("Representative Thermal History Profiles", fontsize=FONT_SIZE_TITLE)
@@ -338,11 +479,37 @@ def plot_eda_summary_2x2(df: pd.DataFrame, output_dir: Path) -> None:
         if row_idx == 1:
             ax.set_xlabel("Applied Stress (MPa)", fontsize=FONT_SIZE_LABEL)
 
-    axes[0, 0].legend(loc="upper left", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    if handles:
+        axes[0, 0].legend(loc="upper left", fontsize=FONT_SIZE_LEGEND, framealpha=0.9)
 
     plt.tight_layout()
     plt.savefig(output_dir / "eda_summary_2x2.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_stage_boundaries_all_tests(output_dir: Path, style: EDAStyleConfig) -> None:
+    """Generates creep stage boundary plots for all experimental tests using untrimmed test data."""
+    stages_dir = output_dir / "stage_boundaries"
+    stages_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        raw_tests = _load_untrimmed_raw_tests()
+        if not raw_tests:
+            print("Notice: No test data found. Skipping stage boundary plots.")
+            return
+
+        for tid, ctest in raw_tests.items():
+            plot_creep_stage_boundaries(
+                test=ctest,
+                k1=K1,
+                k2=K2,
+                output_dir=stages_dir,
+                style=style,
+            )
+        print(f"Successfully generated stage boundary plots in: {stages_dir}")
+    except Exception as e:
+        print(f"Notice: Stage boundary plots generation skipped: {e}")
 
 
 def generate_eda_latex_table(df: pd.DataFrame, output_dir: Path) -> None:
@@ -350,7 +517,6 @@ def generate_eda_latex_table(df: pd.DataFrame, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     tex_path = output_dir / "eda_summary_table.tex"
 
-    # Helper function to compute mean and range string
     def calc_stats(series, scale=1.0, fmt="{:.2f}", filter_positive=False):
         if filter_positive:
             valid = series[series.notna() & (series > 0)]
@@ -364,7 +530,6 @@ def generate_eda_latex_table(df: pd.DataFrame, output_dir: Path) -> None:
         mean_val = valid.mean() * scale
         mean_str = fmt.format(mean_val)
 
-        # Return N/A for range if there is only 1 value
         if count <= 1:
             range_str = "N/A"
         else:
@@ -419,25 +584,18 @@ def generate_eda_latex_table(df: pd.DataFrame, output_dir: Path) -> None:
 
             # Tertiary creep count detection
             if "Has_Tertiary" in sub.columns:
-                n_tert = int(sub["Has_Tertiary"].sum())
-            elif "Tertiary" in sub.columns:
-                n_tert = int(sub["Tertiary"].sum())
-            elif "k2" in sub.columns:
-                n_tert = int((sub["k2"] > 0).sum())
-            elif "has_tertiary" in sub.columns:
-                n_tert = int(sub["has_tertiary"].sum())
+                n_tert = int(sub["Has_Tertiary"].astype(bool).sum())
             else:
                 n_tert = 0
 
             # Calculate statistics for each metric
-            t_init_m, t_init_r = calc_stats(sub["Initial_Temp_C"], scale=1.0, fmt="{:.1f}")
+            t_init_m, t_init_r = calc_stats(sub.get("Initial_Temp_C", pd.Series(dtype=float)), scale=1.0, fmt="{:.1f}")
             
             temp_sec_col = "Mean_Temp_C" if "Mean_Temp_C" in sub.columns else "Mean_Temp_C_Secondary_Creep"
-            t_sec_m, t_sec_r = calc_stats(sub[temp_sec_col], scale=1.0, fmt="{:.1f}")
+            t_sec_m, t_sec_r = calc_stats(sub.get(temp_sec_col, pd.Series(dtype=float)), scale=1.0, fmt="{:.1f}")
             
-            eps0_m, eps0_r = calc_stats(sub["Eps_Tilde_0"], scale=1e3, fmt="{:.2f}")
-            
-            eps_ss_m, eps_ss_r = calc_stats(sub["Eps_Dot_Ss"], scale=1e7, fmt="{:.2f}", filter_positive=True)
+            eps0_m, eps0_r = calc_stats(sub.get("Eps_Tilde_0", pd.Series(dtype=float)), scale=1e3, fmt="{:.2f}")
+            eps_ss_m, eps_ss_r = calc_stats(sub.get("Eps_Dot_Ss", pd.Series(dtype=float)), scale=1e7, fmt="{:.2f}", filter_positive=True)
 
             # Mean Row
             latex_str.append(
@@ -481,8 +639,12 @@ def main() -> None:
     plot_temperature_profiles(temp_profiles, PLOTS_DIR)
     plot_eda_summary_2x2(df, PLOTS_DIR)
     
-    print("Generating pairwise relationships plot...")
     style = EDAStyleConfig()
+
+    print("Generating stage boundary plots...")
+    plot_stage_boundaries_all_tests(PLOTS_DIR, style)
+
+    print("Generating pairwise relationships plot...")
     out_pair = plot_pairwise_relationships(df, PLOTS_DIR, style)
     print(f"Successfully generated pairwise plot at: {out_pair}")
 

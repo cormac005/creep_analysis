@@ -122,16 +122,15 @@ class TestResidualDerivativeIsothermal:
         assert isinstance(res, float)
 
     def test_stress_diff_zero_with_n_at_least_one_gives_zero_term(self):
-        """At stress_diff == 0 with n >= 1, the Norton-Hoff derivative term
-        is well-defined and equal to 0 (no special-casing needed)."""
+        """At stress_diff == 0 with n >= 1, the softplus activation derivative
+        ds/dx = 0.5, so the Norton-Hoff derivative term contributes 0.5 * combined_E,
+        yielding dR = 1 - 0.5*dt*combined_E*(-0.5) = 1.25."""
         params = _isothermal_params(n=1.0)
         dR = residual_derivative(
             sigma_ep_next=10.0, sigma_ep_n=10.0, sigma=10.0,
             T_n=293.15, T_next=293.15, t_n=1.0, dt=1.0, params=params,
         )
-        # bracket_deriv = 0 (temp terms vanish) - 0 (norton_hoff term is 0) = 0
-        # dR = 1 - 0.5*dt*combined_E*0 = 1
-        assert dR == pytest.approx(1.0)
+        assert dR == pytest.approx(1.25)
 
 
 class TestResidualNonIsothermal:

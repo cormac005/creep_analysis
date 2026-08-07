@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.lines import Line2D
+from creep_model.domain import CreepTest
+from creep_model.eda.stage_classification import classify_stages
 
 
 @dataclass
@@ -86,86 +88,156 @@ def _nominal_stress(df: pd.DataFrame) -> pd.Series:
     return df["Applied_Stress_MPa"].apply(lambda v: 10 if v < 15 else (20 if v < 25 else 30))
 
 
-def plot_creep_stage_boundaries(X_raw, y_raw, test_id: str, output_dir: Path, style: EDAStyleConfig) -> Path:
-    """Visualizes boundaries of each creep stage calculated via raw data algorithm."""
-    X = np.asarray(X_raw).flatten()
-    y = np.asarray(y_raw).flatten()
+def plot_creep_stage_boundaries(
+    test: CreepTest,
+    k1: int,
+    k2: int,
+    output_dir: Path,
+    style: EDAStyleConfig,
+) -> Path:
+    """
+    Visualizes boundaries of each creep stage calculated via classify_stages.
     
+    Args:
+        test: The CreepTest object containing time and strain series data.
+        k1: Plateau count threshold for secondary creep start.
+        k2: Plateau count threshold for tertiary creep start.
+        output_dir: Path where the plot image will be saved.
+        style: EDAStyleConfig instance for styling plot elements.
+
+    Returns:
+        Path to the saved plot image.
+    """
+    X = np.asarray(test.time_series).flatten()
+    y = np.asarray(test.strain_series).flatten()
+    test_id = test.test_id
+
     output_dir.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=style.figsize_full)
-    
-    ax.scatter(X, y, color=style.quality_colors["High"], s=10, alpha=0.6, marker='o', label="Measured Strain")
-    
-    unique_strains, counts = np.unique(y, return_counts=True)
-    unique_strains = unique_strains[:-1]
-    counts = counts[:-1]
-    diffs = np.diff(counts)
-    
-    is_decreasing = (diffs <= 0)
-    secondary_trigger = np.where(is_decreasing[:-2] & is_decreasing[1:-1] & is_decreasing[2:])[0]
-    
+
+    ax.scatter(
+        X,
+        y,
+        color=style.quality_colors["High"],
+        s=10,
+        alpha=0.6,
+        marker="o",
+        label="Measured Strain",
+    )
+
+    # Classify creep stages using the provided k1 and k2 parameters
+    classification = classify_stages(test, k1=k1, k2=k2)
+
     y_max = np.max(y)
     y_annot = y_max + 0.07 * (y_max - min(0, np.min(y)))
-    
-    if len(secondary_trigger) > 0:
-        first_dec_idx = secondary_trigger[0]
-        strain_start = float(unique_strains[first_dec_idx])
-        matching_start_indices = np.where(y == strain_start)[0]
-        time_start = float(X[matching_start_indices[0]])
-        
-        ax.axvline(x=time_start, color=style.boundary_color, linestyle='--', linewidth=1.5, alpha=0.8)
-        
-        plateau_value = counts[first_dec_idx]
-        is_tertiary_drop = (counts[first_dec_idx:] < plateau_value)
-        tertiary_trigger = np.where(is_tertiary_drop[:-2] & is_tertiary_drop[1:-1] & is_tertiary_drop[2:])[0]
-        
-        if len(tertiary_trigger) > 0:
-            end_idx = first_dec_idx + tertiary_trigger[0]
-            strain_end = float(unique_strains[end_idx])
-            matching_end_indices = np.where(y == strain_end)[0]
-            time_end = float(X[matching_end_indices[0]])
-            
-            ax.axvline(x=time_end, color=style.boundary_color, linestyle='--', linewidth=1.5, alpha=0.8)
-            
-            ax.text(time_start / 2, y_annot, "Primary", ha='center', fontsize=style.font_size_annot, style='italic')
-            ax.text((time_start + time_end) / 2, y_annot, "Secondary", ha='center', fontsize=style.font_size_annot, style='italic')
-            ax.text(time_end + (np.max(X) - time_end) / 2, y_annot, "Tertiary", ha='center', fontsize=style.font_size_annot, style='italic')
-            
-            delta_strain = strain_end - strain_start
-            delta_time = time_end - time_start
-            if delta_time != 0:
-                rate = delta_strain / delta_time
-                line_x = np.array([time_start, time_end])
-                line_y = strain_start + rate * (line_x - time_start)
-                ax.plot(line_x, line_y, color=style.fit_color, linewidth=1.8, linestyle='--', label=f"Secondary Fit (Rate: {rate:.2e})")
-                
+
+    if classification.primary_end_idx is not None:
+        time_start = float(X[classification.primary_end_idx])
+        strain_start = float(y[classification.primary_end_idx])
+
+        # Primary / Secondary boundary line
+        ax.axvline(
+            x=time_start,
+            color=style.boundary_color,
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.8,
+        )
+
+        time_end = float(X[classification.secondary_end_idx])
+        strain_end = float(y[classification.secondary_end_idx])
+
+        # Determine if Tertiary stage was detected
+        # In classify_stages, secondary_end_idx equals plateaus[-2].end_idx if Tertiary is not found
+        last_classified_end_idx = classification.plateaus[-2].end_idx
+        has_tertiary = classification.secondary_end_idx < last_classified_end_idx
+
+        if has_tertiary:
+            # Secondary / Tertiary boundary line
+            ax.axvline(
+                x=time_end,
+                color=style.boundary_color,
+                linestyle="--",
+                linewidth=1.5,
+                alpha=0.8,
+            )
+
+            ax.text(
+                time_start / 2,
+                y_annot,
+                "Primary",
+                ha="center",
+                fontsize=style.font_size_annot,
+                style="italic",
+            )
+            ax.text(
+                (time_start + time_end) / 2,
+                y_annot,
+                "Secondary",
+                ha="center",
+                fontsize=style.font_size_annot,
+                style="italic",
+            )
+            ax.text(
+                time_end + (np.max(X) - time_end) / 2,
+                y_annot,
+                "Tertiary",
+                ha="center",
+                fontsize=style.font_size_annot,
+                style="italic",
+            )
         else:
-            strain_end = float(unique_strains[-1])
-            matching_end_indices = np.where(y == strain_end)[0]
-            time_end = float(X[matching_end_indices[0]])
-            
-            ax.text(time_start / 2, y_annot, "Primary", ha='center', fontsize=style.font_size_annot, style='italic')
-            ax.text((time_start + np.max(X)) / 2, y_annot, "Secondary", ha='center', fontsize=style.font_size_annot, style='italic')
-            
-            delta_strain = strain_end - strain_start
-            delta_time = time_end - time_start
-            if delta_time != 0:
-                rate = delta_strain / delta_time
-                line_x = np.array([time_start, time_end])
-                line_y = strain_start + rate * (line_x - time_start)
-                ax.plot(line_x, line_y, color=style.fit_color, linewidth=1.8, linestyle='--', label=f"Secondary Fit (Rate: {rate:.2e})")
+            ax.text(
+                time_start / 2,
+                y_annot,
+                "Primary",
+                ha="center",
+                fontsize=style.font_size_annot,
+                style="italic",
+            )
+            ax.text(
+                (time_start + np.max(X)) / 2,
+                y_annot,
+                "Secondary",
+                ha="center",
+                fontsize=style.font_size_annot,
+                style="italic",
+            )
+
+        # Draw secondary creep rate fit line
+        delta_strain = strain_end - strain_start
+        delta_time = time_end - time_start
+        if delta_time != 0:
+            rate = delta_strain / delta_time
+            line_x = np.array([time_start, time_end])
+            line_y = strain_start + rate * (line_x - time_start)
+            ax.plot(
+                line_x,
+                line_y,
+                color=style.fit_color,
+                linewidth=1.8,
+                linestyle="--",
+                label=f"Secondary Fit (Rate: {rate:.2e})",
+            )
     else:
-        ax.text(np.max(X) / 2, y_annot, "Primary", ha='center', fontsize=style.font_size_annot, style='italic')
+        ax.text(
+            np.max(X) / 2,
+            y_annot,
+            "Primary",
+            ha="center",
+            fontsize=style.font_size_annot,
+            style="italic",
+        )
 
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Strain")
     if style.show_titles:
         ax.set_title(f"Creep Stages Boundary Identification - Test {test_id}")
-        
+
     _apply_thesis_style(ax, style, X, y)
-    
+
     ax.legend(loc="lower right", fontsize=style.font_size_legend, framealpha=0.9)
-    
+
     out_path = output_dir / f"creep_stages_{test_id}.png"
     fig.tight_layout()
     fig.savefig(out_path, dpi=style.dpi, bbox_inches="tight")

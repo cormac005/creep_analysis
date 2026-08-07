@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from creep_model.domain import CreepTest
 from creep_model.viz.eda_plots import (
     EDAStyleConfig,
     _nominal_stress,
@@ -112,7 +113,17 @@ def test_eda_plots_empty_groups(sample_eda_df, default_style, tmp_path):
 def test_plot_creep_stage_boundaries_primary_only(tmp_path, default_style):
     y = np.concatenate([np.repeat(i, i+1) for i in range(20)])
     X = np.arange(len(y))
-    out_path = plot_creep_stage_boundaries(X, y, "T1", tmp_path, default_style)
+    test = CreepTest(
+        test_id="T1",
+        time_series=X,
+        strain_series=y,
+        temp_time_series=X,
+        temperature_readings=np.full_like(X, 20.0),
+        applied_stress_MPa=10.0,
+        age_days=7,
+        print_quality="Standard",
+    )
+    out_path = plot_creep_stage_boundaries(test, k1=25, k2=30, output_dir=tmp_path, style=default_style)
     assert out_path.exists()
 
 def test_plot_creep_stage_boundaries_no_tertiary(tmp_path, default_style):
@@ -120,7 +131,17 @@ def test_plot_creep_stage_boundaries_no_tertiary(tmp_path, default_style):
     y2 = np.concatenate([np.repeat(i, 6) for i in range(5, 15)]) # 5..14
     y = np.concatenate([y1, y2])
     X = np.arange(len(y))
-    out_path = plot_creep_stage_boundaries(X, y, "T2", tmp_path, default_style)
+    test = CreepTest(
+        test_id="T2",
+        time_series=X,
+        strain_series=y,
+        temp_time_series=X,
+        temperature_readings=np.full_like(X, 20.0),
+        applied_stress_MPa=10.0,
+        age_days=7,
+        print_quality="Standard",
+    )
+    out_path = plot_creep_stage_boundaries(test, k1=2, k2=20, output_dir=tmp_path, style=default_style)
     assert out_path.exists()
 
 def test_plot_creep_stage_boundaries_full(tmp_path):
@@ -129,7 +150,17 @@ def test_plot_creep_stage_boundaries_full(tmp_path):
     y3 = np.concatenate([np.repeat(i, 4 - (i-10)) for i in range(10, 14)]) # 10..13
     y = np.concatenate([y1, y2, y3])
     X = np.arange(len(y))
+    test = CreepTest(
+        test_id="T3",
+        time_series=X,
+        strain_series=y,
+        temp_time_series=X,
+        temperature_readings=np.full_like(X, 20.0),
+        applied_stress_MPa=10.0,
+        age_days=7,
+        print_quality="Standard",
+    )
     
     style_with_titles = EDAStyleConfig(show_titles=True)
-    out_path = plot_creep_stage_boundaries(X, y, "T3", tmp_path, style_with_titles)
+    out_path = plot_creep_stage_boundaries(test, k1=2, k2=6, output_dir=tmp_path, style=style_with_titles)
     assert out_path.exists()
