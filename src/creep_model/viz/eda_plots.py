@@ -556,3 +556,51 @@ def plot_pairwise_relationships(df: pd.DataFrame, output_dir: Path, style: EDASt
     g.fig.savefig(out_path, dpi=style.dpi, bbox_inches="tight")
     plt.close(g.fig)
     return out_path
+
+def plot_temperature_fit_example(test, output_dir: Path, style: EDAStyleConfig) -> Path:
+    """
+    Strain + raw temperature readings + continuous temperature fit vs.
+    time, for a single named test (Fig 1.1's "temperature handling
+    quality" example figures).
+
+    Deliberately takes a CreepTest directly (not a DataFrame or an h5
+    path) -- this only needs test.time_series/strain_series/
+    temp_time_series/temperature_readings/temperature_polynomial(), all
+    available straight from 01_classify_and_trim.py's output. It does
+    NOT depend on the TLV fit, so it can be regenerated in seconds any
+    time stage-classification or temperature-fitting changes, without
+    waiting on (or requiring a successful) 02_fit_tlv.py run.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig, ax1 = plt.subplots(figsize=style.figsize_side)
+
+    color_strain = "#1f77b4"
+    color_temp = "#d62728"
+
+    ax1.scatter(test.time_series, test.strain_series, color=color_strain,
+                s=10, alpha=0.6, marker="o", label="Measured Strain")
+    ax1.set_xlabel("Time (s)")
+    ax1.set_ylabel("Strain", color=color_strain, fontweight="bold")
+    ax1.tick_params(axis="y", labelcolor=color_strain)
+    ax1.grid(True, linestyle="--", alpha=style.grid_alpha, color=style.grid_color)
+
+    ax2 = ax1.twinx()
+    ax2.scatter(test.temp_time_series, test.temperature_readings, color=color_temp,
+                marker="x", s=35, linewidths=1.2, label="Raw Temp. Readings")
+
+    poly = test.temperature_polynomial()
+    t_clamped = np.clip(test.time_series, test.temp_time_series.min(), test.temp_time_series.max())
+    ax2.plot(test.time_series, poly(t_clamped), color="black", linestyle="--",
+              linewidth=1.8, label="Continuous Temp. Fit")
+    ax2.set_ylabel("Temperature (°C)", color=color_temp, fontweight="bold")
+    ax2.tick_params(axis="y", labelcolor=color_temp)
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="lower right", fontsize=style.font_size_legend)
+
+    out_path = output_dir / f"temp_fit_{test.test_id.replace('.', '_')}.png"
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=style.dpi, bbox_inches="tight")
+    plt.close(fig)
+    return out_path

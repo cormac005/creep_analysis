@@ -11,6 +11,7 @@ class CreepConfig:
     metadata_sheet_name: str = "MetaData"
     data_output_directory: Path = Path("data/processed")
     general_output_directory: Path = Path("outputs")
+    figures_and_tables_directory: Path = Path("docs/figures_and_tables")
 
     # Constants for the creep test
     gauge_length_mm: float = 20.0  

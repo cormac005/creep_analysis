@@ -23,8 +23,7 @@ PIPELINE_SCRIPTS = [
     "01_classify_and_trim.py",
     "02_fit_tlv.py",
     "03_compute_eda_stats.py",
-    "04_generate_tlv_plots_and_tables.py",
-    "05_generate_eda_plots_and_tables.py",
+    "04_generate_figures_and_tables.py",
 ]
 
 

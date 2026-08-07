@@ -37,6 +37,9 @@ class TLVBounds:
         `tests` (Table 1.1), rather than left at +inf. `tests` should be the
         TRIMMED tests for a single print-quality group.
         """
+        completed = [t for t in tests if not t.is_empty]
+        if not completed:
+            raise ValueError("TLVBounds.from_group_data received no completed (non-empty) tests.")
         max_ratio = max(
             test.applied_stress_MPa / max(float(test.strain_series.max()), 1e-12)
             for test in tests
