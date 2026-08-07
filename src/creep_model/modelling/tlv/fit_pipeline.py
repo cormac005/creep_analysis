@@ -60,6 +60,10 @@ def _lm_residuals(
     x_physical = unscale(x_scaled, scale_factors)
     params = TLVParameters.from_array(x_physical)
 
+    # LM minimizes sum of squared residuals. 
+    # To match the DE scalar MSE penalty, we take the square root of the penalty for the raw residual array.
+    residual_penalty = np.sqrt(_NON_CONVERGENCE_PENALTY)
+
     all_residuals = []
     for item in tests:
         if isinstance(item, tuple):
@@ -73,10 +77,13 @@ def _lm_residuals(
 
         try:
             y_pred = y_pred_func()
-        except SolverConvergenceError as e:
-            all_residuals.append(np.full_like(strain_series, 1e3))
+        except SolverConvergenceError:
+            # Apply the consistent penalty to this test's residual block
+            all_residuals.append(np.full_like(strain_series, residual_penalty))
             continue
+            
         all_residuals.append(y_pred - strain_series)
+        
     return np.concatenate(all_residuals)
 
 
