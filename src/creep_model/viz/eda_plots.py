@@ -2,13 +2,14 @@
 Thesis-ready EDA plotting functions (docs/methodology.md Sec 1.2).
 
 Each function takes the eda_summary DataFrame and an output directory,
-and saves publication-styled figures.
+and saves publication-styled figures perfectly aligned to the Style Guide.
 """
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -70,7 +71,7 @@ def _apply_thesis_style(ax, style: EDAStyleConfig, x_data=None, y_data=None, is_
         x_arr = np.asarray(x_data, dtype=float)
         x_arr = x_arr[~np.isnan(x_arr)]
         if len(x_arr) > 0:
-            x_min, x_max = min(0, np.min(x_arr)), np.max(x_arr)
+            x_min, x_max = min(0, np.nanmin(x_arr)), np.nanmax(x_arr)
             x_range = x_max - x_min if x_max > x_min else 1
             ax.set_xlim(left=x_min, right=x_max + 0.03 * x_range)
             
@@ -78,7 +79,7 @@ def _apply_thesis_style(ax, style: EDAStyleConfig, x_data=None, y_data=None, is_
         y_arr = np.asarray(y_data, dtype=float)
         y_arr = y_arr[~np.isnan(y_arr)]
         if len(y_arr) > 0:
-            y_min, y_max = min(0, np.min(y_arr)), np.max(y_arr)
+            y_min, y_max = min(0, np.nanmin(y_arr)), np.nanmax(y_arr)
             y_range = y_max - y_min if y_max > y_min else 1
             ax.set_ylim(bottom=y_min, top=y_max + 0.15 * y_range)
 
@@ -95,19 +96,7 @@ def plot_creep_stage_boundaries(
     output_dir: Path,
     style: EDAStyleConfig,
 ) -> Path:
-    """
-    Visualizes boundaries of each creep stage calculated via classify_stages.
-    
-    Args:
-        test: The CreepTest object containing time and strain series data.
-        k1: Plateau count threshold for secondary creep start.
-        k2: Plateau count threshold for tertiary creep start.
-        output_dir: Path where the plot image will be saved.
-        style: EDAStyleConfig instance for styling plot elements.
-
-    Returns:
-        Path to the saved plot image.
-    """
+    """Visualizes boundaries of each creep stage calculated via classify_stages."""
     X = np.asarray(test.time_series).flatten()
     y = np.asarray(test.strain_series).flatten()
     test_id = test.test_id
@@ -148,61 +137,17 @@ def plot_creep_stage_boundaries(
         strain_end = float(y[classification.secondary_end_idx])
 
         # Determine if Tertiary stage was detected
-        # In classify_stages, secondary_end_idx equals plateaus[-2].end_idx if Tertiary is not found
         last_classified_end_idx = classification.plateaus[-2].end_idx
         has_tertiary = classification.secondary_end_idx < last_classified_end_idx
 
         if has_tertiary:
-            # Secondary / Tertiary boundary line
-            ax.axvline(
-                x=time_end,
-                color=style.boundary_color,
-                linestyle="--",
-                linewidth=1.5,
-                alpha=0.8,
-            )
-
-            ax.text(
-                time_start / 2,
-                y_annot,
-                "Primary",
-                ha="center",
-                fontsize=style.font_size_annot,
-                style="italic",
-            )
-            ax.text(
-                (time_start + time_end) / 2,
-                y_annot,
-                "Secondary",
-                ha="center",
-                fontsize=style.font_size_annot,
-                style="italic",
-            )
-            ax.text(
-                time_end + (np.max(X) - time_end) / 2,
-                y_annot,
-                "Tertiary",
-                ha="center",
-                fontsize=style.font_size_annot,
-                style="italic",
-            )
+            ax.axvline(x=time_end, color=style.boundary_color, linestyle="--", linewidth=1.5, alpha=0.8)
+            ax.text(time_start / 2, y_annot, "Primary", ha="center", fontsize=style.font_size_annot, style="italic")
+            ax.text((time_start + time_end) / 2, y_annot, "Secondary", ha="center", fontsize=style.font_size_annot, style="italic")
+            ax.text(time_end + (np.max(X) - time_end) / 2, y_annot, "Tertiary", ha="center", fontsize=style.font_size_annot, style="italic")
         else:
-            ax.text(
-                time_start / 2,
-                y_annot,
-                "Primary",
-                ha="center",
-                fontsize=style.font_size_annot,
-                style="italic",
-            )
-            ax.text(
-                (time_start + np.max(X)) / 2,
-                y_annot,
-                "Secondary",
-                ha="center",
-                fontsize=style.font_size_annot,
-                style="italic",
-            )
+            ax.text(time_start / 2, y_annot, "Primary", ha="center", fontsize=style.font_size_annot, style="italic")
+            ax.text((time_start + np.max(X)) / 2, y_annot, "Secondary", ha="center", fontsize=style.font_size_annot, style="italic")
 
         # Draw secondary creep rate fit line
         delta_strain = strain_end - strain_start
@@ -220,14 +165,7 @@ def plot_creep_stage_boundaries(
                 label=f"Secondary Fit (Rate: {rate:.2e})",
             )
     else:
-        ax.text(
-            np.max(X) / 2,
-            y_annot,
-            "Primary",
-            ha="center",
-            fontsize=style.font_size_annot,
-            style="italic",
-        )
+        ax.text(np.max(X) / 2, y_annot, "Primary", ha="center", fontsize=style.font_size_annot, style="italic")
 
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Strain")
@@ -250,25 +188,39 @@ def plot_eps_tilde_0_vs_stress(df: pd.DataFrame, output_dir: Path, style: EDASty
     output_dir.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=style.figsize_full) 
     
-    temp_col = "Mean_Temp_C" if "Mean_Temp_C" in df.columns else "Mean_Temp_C_Secondary_Creep"
-    vmin, vmax = df[temp_col].min(), df[temp_col].max()
+    plot_df = df.copy()
+    
+    # Decide which temperature column to use for coloring
+    if "Mean_Temp_C" in plot_df.columns:
+        temp_col = "Mean_Temp_C"
+    elif "Mean_Temp_C_Secondary_Creep" in plot_df.columns:
+        temp_col = "Mean_Temp_C_Secondary_Creep"
+    else:
+        temp_col = "Initial_Temp_C"
+        
+    # Fallback to Initial_Temp_C for missing values (e.g., tests without secondary creep)
+    if temp_col in plot_df.columns and "Initial_Temp_C" in plot_df.columns:
+        plot_df[temp_col] = plot_df[temp_col].fillna(plot_df["Initial_Temp_C"])
+        
+    vmin, vmax = plot_df[temp_col].min(), plot_df[temp_col].max()
 
     scatter_plots = []
     for quality in style.quality_order:
-        sub = df[df["Print_Quality"] == quality]
+        sub = plot_df[plot_df["Print_Quality"] == quality]
+        if sub.empty:
+            continue
         sc = ax.scatter(sub["Applied_Stress_MPa"], sub["Eps_Tilde_0"],
                         c=sub[temp_col], cmap=style.cmap, vmin=vmin, vmax=vmax,
                         marker=style.quality_markers[quality], label=quality,
                         s=style.base_marker_size, alpha=style.alpha, edgecolor="black", linewidth=0.7)
-        if len(sub) > 0:
-            scatter_plots.append(sc)
+        scatter_plots.append(sc)
         
     ax.set_xlabel("Applied Stress (MPa)")
     ax.set_ylabel(r"$\tilde{\epsilon}_0$ (Initial Elastic Strain)")
     if style.show_titles:
         ax.set_title("Initial Strain vs. Applied Stress")
         
-    _apply_thesis_style(ax, style, df["Applied_Stress_MPa"], df["Eps_Tilde_0"])
+    _apply_thesis_style(ax, style, plot_df["Applied_Stress_MPa"], plot_df["Eps_Tilde_0"])
 
     if scatter_plots:
         cbar = plt.colorbar(scatter_plots[0], ax=ax)
@@ -300,7 +252,16 @@ def plot_eps_dot_ss_vs_stress(df: pd.DataFrame, output_dir: Path, style: EDAStyl
     # Filter out specimens where secondary creep was not detected
     valid_df = df[df["Eps_Dot_Ss"].notna() & (df["Eps_Dot_Ss"] > 0)].copy()
     
-    temp_col = "Mean_Temp_C" if "Mean_Temp_C" in valid_df.columns else "Mean_Temp_C_Secondary_Creep"
+    if "Mean_Temp_C" in valid_df.columns:
+        temp_col = "Mean_Temp_C"
+    elif "Mean_Temp_C_Secondary_Creep" in valid_df.columns:
+        temp_col = "Mean_Temp_C_Secondary_Creep"
+    else:
+        temp_col = "Initial_Temp_C"
+        
+    if temp_col in valid_df.columns and "Initial_Temp_C" in valid_df.columns:
+        valid_df[temp_col] = valid_df[temp_col].fillna(valid_df["Initial_Temp_C"])
+        
     vmin, vmax = valid_df[temp_col].min(), valid_df[temp_col].max() if not valid_df.empty else (20, 25)
 
     scatter_plots = []
@@ -360,8 +321,10 @@ def plot_eps_tilde_0_vs_age(df: pd.DataFrame, output_dir: Path, style: EDAStyleC
         
     _apply_thesis_style(ax, style, df["Age_Days"], df["Eps_Tilde_0"])
 
-    leg = ax.legend(title="Print Quality", fontsize=style.font_size_legend, framealpha=0.9)
-    plt.setp(leg.get_title(), fontsize=style.font_size_legend, fontweight='bold')
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        leg = ax.legend(title="Print Quality", fontsize=style.font_size_legend, framealpha=0.9)
+        plt.setp(leg.get_title(), fontsize=style.font_size_legend, fontweight='bold')
 
     out_path = output_dir / "eps_tilde_0_vs_age.png"
     fig.tight_layout()
@@ -377,7 +340,16 @@ def plot_eps_dot_ss_vs_temperature(df: pd.DataFrame, output_dir: Path, style: ED
     
     # Filter out specimens where secondary creep was not detected
     valid_df = df[df["Eps_Dot_Ss"].notna() & (df["Eps_Dot_Ss"] > 0)].copy()
-    temp_col = "Mean_Temp_C" if "Mean_Temp_C" in valid_df.columns else "Mean_Temp_C_Secondary_Creep"
+    
+    if "Mean_Temp_C" in valid_df.columns:
+        temp_col = "Mean_Temp_C"
+    elif "Mean_Temp_C_Secondary_Creep" in valid_df.columns:
+        temp_col = "Mean_Temp_C_Secondary_Creep"
+    else:
+        temp_col = "Initial_Temp_C"
+        
+    if temp_col in valid_df.columns and "Initial_Temp_C" in valid_df.columns:
+        valid_df[temp_col] = valid_df[temp_col].fillna(valid_df["Initial_Temp_C"])
     
     for quality in style.quality_order:
         sub = valid_df[valid_df["Print_Quality"] == quality]
@@ -393,10 +365,12 @@ def plot_eps_dot_ss_vs_temperature(df: pd.DataFrame, output_dir: Path, style: ED
     if style.show_titles:
         ax.set_title("Steady-State Strain Rate vs. Temperature")
         
-    _apply_thesis_style(ax, style, valid_df[temp_col], valid_df["Eps_Dot_Ss"])
+    _apply_thesis_style(ax, style, valid_df[temp_col] if not valid_df.empty else None, valid_df["Eps_Dot_Ss"] if not valid_df.empty else None)
 
-    leg = ax.legend(title="Print Quality", fontsize=style.font_size_legend, framealpha=0.9)
-    plt.setp(leg.get_title(), fontsize=style.font_size_legend, fontweight='bold')
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        leg = ax.legend(title="Print Quality", fontsize=style.font_size_legend, framealpha=0.9)
+        plt.setp(leg.get_title(), fontsize=style.font_size_legend, fontweight='bold')
 
     out_path = output_dir / "eps_dot_ss_vs_temperature.png"
     fig.tight_layout()
@@ -472,7 +446,11 @@ def plot_mean_eps_dot_ss_bar(df: pd.DataFrame, output_dir: Path, style: EDAStyle
     max_vals = summary["mean"] + summary["std"]
     _apply_thesis_style(ax, style, y_data=max_vals, is_categorical_x=True)
 
-    leg = ax.legend(title="Print Quality", fontsize=style.font_size_legend, framealpha=0.9)
+    legend_elements = [
+        mpatches.Patch(color=style.quality_colors[q], label=q, alpha=0.85)
+        for q in style.quality_order
+    ]
+    leg = ax.legend(handles=legend_elements, title="Print Quality", fontsize=style.font_size_legend, framealpha=0.9)
     plt.setp(leg.get_title(), fontsize=style.font_size_legend, fontweight='bold')
 
     out_path = output_dir / "eda_mean_eps_dot_ss_bar.png"
@@ -536,18 +514,32 @@ def plot_pairwise_relationships(df: pd.DataFrame, output_dir: Path, style: EDASt
     if g._legend:
         plt.setp(g._legend.get_title(), fontsize=legend_fs, fontweight='bold')
     
-    for i, y_col in enumerate(plot_vars):
-        for j, x_col in enumerate(plot_vars):
-            ax = g.axes[i, j]
-            ax.tick_params(axis='both', labelsize=tick_fs)
-            ax.grid(True, color=style.grid_color, linestyle='--', alpha=style.grid_alpha)
+    for ax in g.axes.flatten():
+        if ax is None:
+            continue
+        ax.tick_params(axis='both', labelsize=tick_fs)
+        ax.grid(True, color=style.grid_color, linestyle='--', alpha=style.grid_alpha)
+        
+        y_label = ax.get_ylabel()
+        if y_label:
+            ax.set_ylabel(y_label, fontsize=label_fs, fontweight='bold')
+        x_label = ax.get_xlabel()
+        if x_label:
+            ax.set_xlabel(x_label, fontsize=label_fs, fontweight='bold')
             
-            y_label = ax.get_ylabel()
-            if y_label:
-                ax.set_ylabel(y_label, fontsize=label_fs, fontweight='bold')
-            x_label = ax.get_xlabel()
-            if x_label:
-                ax.set_xlabel(x_label, fontsize=label_fs, fontweight='bold')
+        # Style guide axis limits enforcement on pairwise plots
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        
+        x_min = min(0, xlim[0])
+        x_max = xlim[1]
+        x_range = x_max - x_min if x_max > x_min else 1
+        ax.set_xlim(left=x_min, right=x_max + 0.03 * x_range)
+        
+        y_min = min(0, ylim[0])
+        y_max = ylim[1]
+        y_range = y_max - y_min if y_max > y_min else 1
+        ax.set_ylim(bottom=y_min, top=y_max + 0.15 * y_range)
 
     if style.show_titles:
         g.fig.suptitle("Pairwise EDA Relationships", y=1.02, fontsize=label_fs + 2, fontweight='bold')
@@ -557,47 +549,73 @@ def plot_pairwise_relationships(df: pd.DataFrame, output_dir: Path, style: EDASt
     plt.close(g.fig)
     return out_path
 
+
 def plot_temperature_fit_example(test, output_dir: Path, style: EDAStyleConfig) -> Path:
     """
     Strain + raw temperature readings + continuous temperature fit vs.
     time, for a single named test (Fig 1.1's "temperature handling
     quality" example figures).
 
-    Deliberately takes a CreepTest directly (not a DataFrame or an h5
-    path) -- this only needs test.time_series/strain_series/
-    temp_time_series/temperature_readings/temperature_polynomial(), all
-    available straight from 01_classify_and_trim.py's output. It does
-    NOT depend on the TLV fit, so it can be regenerated in seconds any
-    time stage-classification or temperature-fitting changes, without
-    waiting on (or requiring a successful) 02_fit_tlv.py run.
+    Re-written for full strict compliance with Template A of FigureStyleGuide.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     fig, ax1 = plt.subplots(figsize=style.figsize_side)
 
     color_strain = "#1f77b4"
     color_temp = "#d62728"
+    color_fit = "black"
 
-    ax1.scatter(test.time_series, test.strain_series, color=color_strain,
-                s=10, alpha=0.6, marker="o", label="Measured Strain")
-    ax1.set_xlabel("Time (s)")
-    ax1.set_ylabel("Strain", color=color_strain, fontweight="bold")
-    ax1.tick_params(axis="y", labelcolor=color_strain)
+    x_data = test.time_series
+    y1_data = test.strain_series
+    
+    # Primary Y-axis (Measured Strain)
+    ax1.set_xlabel("Time (s)", fontsize=style.font_size_label)
+    ax1.set_ylabel("Strain", color=color_strain, fontsize=style.font_size_label, fontweight="bold")
+    
+    ax1.scatter(x_data, y1_data, color=color_strain, s=10, alpha=0.6, marker="o", label="Measured Strain")
+    
+    ax1.tick_params(axis="x", labelsize=style.font_size_tick)
+    ax1.tick_params(axis="y", labelcolor=color_strain, labelsize=style.font_size_tick)
     ax1.grid(True, linestyle="--", alpha=style.grid_alpha, color=style.grid_color)
+    
+    # Axis Limits & Padding (Explicit Zero Origin + 15% Headroom)
+    x_min, x_max = min(0, np.nanmin(x_data)), np.nanmax(x_data)
+    y1_min, y1_max = min(0, np.nanmin(y1_data)), np.nanmax(y1_data)
+    x_range = x_max - x_min if x_max > x_min else 1
+    y1_range = y1_max - y1_min if y1_max > y1_min else 1
+    
+    ax1.set_xlim(left=x_min, right=x_max + 0.03 * x_range)
+    ax1.set_ylim(bottom=y1_min, top=y1_max + 0.15 * y1_range)
 
+    # Secondary Y-axis (Temperature)
     ax2 = ax1.twinx()
-    ax2.scatter(test.temp_time_series, test.temperature_readings, color=color_temp,
-                marker="x", s=35, linewidths=1.2, label="Raw Temp. Readings")
+    ax2.set_ylabel("Temperature (°C)", color=color_temp, fontsize=style.font_size_label, fontweight="bold")
+    
+    valid_mask = ~np.isnan(test.temperature_readings)
+    t_valid = test.temp_time_series[valid_mask]
+    temp_valid = test.temperature_readings[valid_mask]
+    
+    ax2.scatter(t_valid, temp_valid, color=color_temp, marker="x", s=35, linewidths=1.2, label="Raw Temp. Readings")
 
     poly = test.temperature_polynomial()
-    t_clamped = np.clip(test.time_series, test.temp_time_series.min(), test.temp_time_series.max())
-    ax2.plot(test.time_series, poly(t_clamped), color="black", linestyle="--",
-              linewidth=1.8, label="Continuous Temp. Fit")
-    ax2.set_ylabel("Temperature (°C)", color=color_temp, fontweight="bold")
-    ax2.tick_params(axis="y", labelcolor=color_temp)
+    t_clamped = np.clip(x_data, test.temp_time_series.min(), test.temp_time_series.max())
+    y2_fit = poly(t_clamped)
+    
+    ax2.plot(x_data, y2_fit, color=color_fit, linestyle="--", linewidth=1.8, label="Continuous Temp. Fit")
+    ax2.tick_params(axis="y", labelcolor=color_temp, labelsize=style.font_size_tick)
+    
+    if len(temp_valid) > 0:
+        y2_min = min(0, np.nanmin(temp_valid), np.nanmin(y2_fit))
+        y2_max = max(np.nanmax(temp_valid), np.nanmax(y2_fit))
+        y2_range = y2_max - y2_min if y2_max > y2_min else 1
+        ax2.set_ylim(bottom=y2_min, top=y2_max + 0.15 * y2_range)
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="lower right", fontsize=style.font_size_legend)
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="center right", fontsize=style.font_size_legend, framealpha=0.9)
+
+    if style.show_titles:
+        ax1.set_title(f"Temperature Fit Example - {test.test_id}", fontsize=style.font_size_title, fontweight='bold')
 
     out_path = output_dir / f"temp_fit_{test.test_id.replace('.', '_')}.png"
     fig.tight_layout()

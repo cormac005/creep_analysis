@@ -11,9 +11,9 @@ this class from its returned TLVParameters.
 import numpy.typing as npt
 
 from creep_model.domain import CreepTest
-from creep_model.modelling.base import BaseCreepModel
 from creep_model.modelling.tlv.parameters import TLVParameters
 from creep_model.modelling.tlv.solver import solve_tlv
+from creep_model.modelling.base import BaseCreepModel
 
 
 class TLVCreepModel(BaseCreepModel):

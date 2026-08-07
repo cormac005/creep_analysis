@@ -20,6 +20,77 @@ from creep_model.viz.eda_plots import (
     plot_pairwise_relationships,
 )
 
+from creep_model.viz.eda_plots import plot_temperature_fit_example
+
+def test_plot_temperature_fit_example(tmp_path, default_style):
+    X = np.linspace(0, 100, 20)
+    y = np.linspace(0, 0.05, 20)
+    temps = np.full_like(X, 23.5)
+    temps[5] = np.nan  # Includes NaNs to test valid_mask filtering
+    
+    test = CreepTest(
+        test_id="Test.01",
+        time_series=X,
+        strain_series=y,
+        temp_time_series=X,
+        temperature_readings=temps,
+        applied_stress_MPa=20.0,
+        age_days=14,
+        print_quality="Standard",
+    )
+    
+    out_path = plot_temperature_fit_example(test, tmp_path, default_style)
+    assert out_path.exists()
+
+def test_plot_temperature_fit_example_with_title(tmp_path):
+    style_with_title = EDAStyleConfig(show_titles=True)
+    X = np.linspace(0, 50, 10)
+    y = np.linspace(0, 0.02, 10)
+    temps = np.full_like(X, 22.0)
+    
+    test = CreepTest(
+        test_id="Test_02",
+        time_series=X,
+        strain_series=y,
+        temp_time_series=X,
+        temperature_readings=temps,
+        applied_stress_MPa=10.0,
+        age_days=7,
+        print_quality="High",
+    )
+    
+    out_path = plot_temperature_fit_example(test, tmp_path, style_with_title)
+    assert out_path.exists()
+
+def test_eda_plots_with_secondary_temp_col(sample_eda_df, default_style, tmp_path):
+    df = sample_eda_df.copy()
+    df["Mean_Temp_C_Secondary_Creep"] = [20.0, 21.0, 22.0, 23.0, 24.0, 25.0]
+    df = df.drop(columns=["Initial_Temp_C"])
+    
+    plot_eps_tilde_0_vs_stress(df, tmp_path, default_style)
+    plot_eps_dot_ss_vs_stress(df, tmp_path, default_style)
+    plot_eps_dot_ss_vs_temperature(df, tmp_path, default_style)
+    plot_pairwise_relationships(df, tmp_path, default_style)
+
+def test_eda_plots_with_mean_temp_col(sample_eda_df, default_style, tmp_path):
+    df = sample_eda_df.copy()
+    df["Mean_Temp_C"] = [20.0, 21.0, 22.0, 23.0, 24.0, 25.0]
+    
+    plot_eps_tilde_0_vs_stress(df, tmp_path, default_style)
+    plot_eps_dot_ss_vs_stress(df, tmp_path, default_style)
+    plot_eps_dot_ss_vs_temperature(df, tmp_path, default_style)
+    plot_pairwise_relationships(df, tmp_path, default_style)
+
+def test_eda_plots_empty_eps_dot_ss(sample_eda_df, default_style, tmp_path):
+    df = sample_eda_df.copy()
+    df["Eps_Dot_Ss"] = np.nan
+    
+    plot_eps_dot_ss_vs_stress(df, tmp_path, default_style)
+    plot_eps_dot_ss_vs_temperature(df, tmp_path, default_style)
+    plot_distribution_by_quality(df, tmp_path, default_style)
+    plot_mean_eps_dot_ss_bar(df, tmp_path, default_style)
+    plot_pairwise_relationships(df, tmp_path, default_style)
+
 @pytest.fixture(autouse=True)
 def close_plt_figures():
     yield
